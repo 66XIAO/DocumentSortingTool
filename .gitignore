@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.hypothesis/
+.benchmarks/
+*.spec.bak
+
+# 本地探测与临时产物
+_probe.txt
+_install.log
+_freeze.txt

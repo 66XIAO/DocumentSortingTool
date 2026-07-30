@@ -1,0 +1,88 @@
+# DocSorter 锁定依赖
+#
+# 锁定环境：conda env `SortingTool` / Python 3.12.13 / Windows x64
+# 锁定时间：2026-07-27
+# 锁定来源：`python -m pip list --format=freeze` 的实际结果
+#
+# 未锁版本的依赖来源见 requirements.in。修改依赖时先改 .in，装完再用
+# freeze 结果回填本文件，不要直接编辑本文件的版本号。
+#
+# 复现安装：
+#   conda create -n SortingTool python=3.12 -y
+#   conda activate SortingTool
+#   python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 60 --retries 10
+
+
+# ============ 直接依赖：运行期 ============
+
+PySide6==6.11.1
+PySide6-Fluent-Widgets==1.11.2
+PyYAML==6.0.3
+Send2Trash==2.1.0
+chardet==7.4.3
+keyring==25.7.0
+httpx==0.28.1
+pypdf==6.14.2
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+
+
+# ============ 直接依赖：开发期 ============
+
+pytest==9.1.1
+pytest-qt==4.5.0
+pytest-benchmark==5.2.3
+hypothesis==6.162.0
+pyinstaller==6.21.0
+
+
+# ============ 传递依赖 ============
+
+# PySide6 元包展开
+PySide6_Essentials==6.11.1
+PySide6_Addons==6.11.1
+shiboken6==6.11.1
+
+# PySide6-Fluent-Widgets
+PySideSix-Frameless-Window==0.8.1
+darkdetect==0.8.0
+pywin32==312
+
+# keyring
+pywin32-ctypes==0.2.3
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.6.0
+more-itertools==11.1.0
+
+# httpx
+anyio==4.14.2
+certifi==2026.7.22
+httpcore==1.0.9
+h11==0.16.0
+idna==3.18
+
+# python-docx / openpyxl / python-pptx
+lxml==6.1.1
+typing_extensions==4.16.0
+et_xmlfile==2.0.0
+pillow==12.3.0
+xlsxwriter==3.2.9
+
+# pytest 系
+colorama==0.4.6
+iniconfig==2.3.0
+packaging==26.0
+pluggy==1.6.0
+Pygments==2.20.0
+py-cpuinfo==9.0.0
+
+# hypothesis
+sortedcontainers==2.4.0
+
+# pyinstaller
+altgraph==0.17.5
+pefile==2024.8.26
+pyinstaller-hooks-contrib==2026.6
+setuptools==83.0.0

@@ -1,0 +1,8 @@
+# 项目源文件统一使用 LF，避免 Windows 下 autocrlf 造成的行尾转换噪音
+* text=auto eol=lf
+
+# 二进制资源不做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.gif binary

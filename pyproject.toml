@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docsorter"
+version = "0.1.0"
+description = "DocSorter - Windows 桌面端文档分类工具"
+readme = "README.md"
+requires-python = ">=3.12"
+
+# 本文件只声明依赖名与下界，精确锁定由 requirements.txt 承担，两者分工不重叠。
+dependencies = [
+    "PySide6>=6.8",
+    "PySide6-Fluent-Widgets>=1.11",
+    "PyYAML>=6.0",
+    "Send2Trash>=1.8",
+    "chardet>=5.2",
+    "keyring>=25.0",
+    "httpx>=0.28",
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-qt>=4.5",
+    "pytest-benchmark>=5.0",
+    "hypothesis>=6.150",
+    "pyinstaller>=6.20",
+]
+
+[project.gui-scripts]
+docsorter = "app.main:main"
+
+[project.scripts]
+docsorter-cli = "app.core.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.config" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: 基准测试与大规模用例，不入门禁（用 -m 'not slow' 排除）",
+]

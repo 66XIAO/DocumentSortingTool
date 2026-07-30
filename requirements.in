@@ -1,0 +1,97 @@
+# DocSorter 依赖清单（未锁版本，仅用于首次安装）
+#
+# 目标环境：conda env `SortingTool` / Python 3.12.13
+# 安装完成后用 `pip list --format=freeze` 的实际结果回填 requirements.txt（用 == 精确锁定）。
+# 本文件对应 pip-tools 约定：.in 是未锁的依赖来源，.txt 是锁定后的结果。
+#
+# 安装命令（在 Anaconda Prompt 中执行）：
+#   conda activate SortingTool
+#   cd /d C:\Users\111\Documents\DocumentSortingTool
+#   python -m pip install -r requirements.in -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 60 --retries 10
+#
+# 注意：PyQt-Fluent-Widgets / PyQt6-Fluent-Widgets / PySide2-Fluent-Widgets /
+# PySide6-Fluent-Widgets 四者顶层包名同为 qfluentwidgets，只能装其中一个，共存会互相覆盖。
+
+
+# ============ Qt 绑定与界面组件 ============
+
+# Qt 绑定。必须用 PySide6（LGPL），不要用 PyQt6（GPL）。需求 18.4
+# Python 3.12/3.13 需要 6.8 及以上版本。
+# 说明：PySide6 是元包，会拉入 PySide6-Essentials（约 80MB）+ PySide6-Addons（约 169MB）。
+# 本项目只用 QtCore / QtGui / QtWidgets / QtSvg，都在 Essentials 内；
+# 若要省下 Addons 的 169MB，可把下一行换成 PySide6-Essentials>=6.8（见 tasks.md 任务 1a）。
+PySide6>=6.8
+
+# Fluent Design 组件库。钉死版本：镜像源上该包常年落后，
+# 钉版本能让镜像过期时直接报错，而不是静默装旧版后在 import 时抛
+# ImportError: cannot import name ... from 'qfluentwidgets'
+PySide6-Fluent-Widgets==1.11.2
+
+
+# ============ 序列化与配置 ============
+
+# rules.yaml / settings.yaml 的解析与序列化。需求 4.2、4.4、18.1
+pyyaml
+
+
+# ============ 文件操作 ============
+
+# 回收站语义。所有作用于文件的删除都走回收站，不做不可逆删除。需求 1.7、12.2、12.4
+send2trash
+
+# 纯文本文件的编码探测。需求 5.6
+chardet
+
+
+# ============ 凭据存储 ============
+
+# 把 LLM api_key 写入 Windows 凭据管理器，配置文件里只留引用键。需求 7.2、7.3
+keyring
+
+
+# ============ LLM 调用 ============
+
+# OpenAICompatProvider 与 OllamaProvider 的 HTTP 客户端。需求 7.1、7.8
+# 集成测试用其内置的 httpx.MockTransport 做假服务端，不需要额外的 mock 包。
+httpx
+
+
+# ============ 文档正文提取（内容级分类） ============
+
+# 需求 5.1：pdf / docx / xlsx / pptx，各自的惰性读取器读到 4096 字符即停
+pypdf
+python-docx
+openpyxl
+python-pptx
+
+
+# ============ 开发与测试 ============
+
+# 单元测试、边界测试、集成测试、冒烟测试
+pytest
+
+# UI 状态联动测试（不做像素级断言）
+pytest-qt
+
+# 三条性能阈值的基准测试，标记 slow，不入门禁。需求 2.14、2.15、10.14
+pytest-benchmark
+
+# 42 条正确性属性的属性化测试。收缩能力是定位反例的关键，不自造随机生成器
+hypothesis
+
+# 打包为 Windows 可执行文件。需求 18.6
+pyinstaller
+
+
+# ============ 无需安装的说明 ============
+#
+# 以下能力用标准库实现，不引入额外依赖：
+#   sqlite3    - LLM 批级结果缓存（需求 8.5）
+#   hashlib    - 跨卷复制的 sha256 校验（需求 12.2）
+#   os.scandir - 目录扫描与空目录判定（需求 2.2、20.11）
+#   mimetypes  - FileEntry.mime
+#   difflib    - 类目名归并的编辑距离（需求 7.10），类目数 ≤ 300 时性能足够
+#   concurrent.futures - 正文提取的 8 线程池（需求 5.4）
+#
+# Pillow 会作为 python-pptx 的传递依赖被装上，图片缩略图（需求 10.8）
+# 优先用 Qt 自带的图像插件通过 QPixmap 加载，不额外声明 Pillow。
