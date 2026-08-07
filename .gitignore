@@ -12,3 +12,8 @@ dist/
 _probe.txt
 _install.log
 _freeze.txt
+*.log
+_m4sandbox/
+
+# 自检脚本（_m4sandbox.py、_launchcheck.py）刻意**不**忽略：
+# 它们是「这次改动到底能不能跑」的可复现证据，而不是一次性产物

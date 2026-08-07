@@ -25,13 +25,24 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, Qt
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QMimeData,
+    QModelIndex,
+    QObject,
+    Qt,
+    Signal,
+)
 
 from app.core.models import ActionKind, ConflictKind, PlanItem, SortPlan
 from app.ui.theme import CONFLICT, SUCCESS, category_color
 
 #: 每次 fetchMore 追加的子行数
 FETCH_BATCH = 200
+
+#: 拖拽的自定义 MIME 类型：只在本树内部流转，携带条目的绝对路径列表。
+#: 不用 text/uri-list：那会让系统把拖拽当成「把文件拖出去」，而这里只是改类目。
+MIME_ITEM_PATHS = "application/x-docsorter-item-paths"
 
 
 class Column(IntEnum):
@@ -75,6 +86,11 @@ class _Node:
 
 class PlanTreeModel(QAbstractItemModel):
     """目标结构树。"""
+
+    #: 拖拽改类目（需求 10.11）：(条目绝对路径列表, 目标类目 path_parts)。
+    #: 与复选框一样，模型只发信号不改方案——override 的记入与重算由
+    #: MainWindow 统一处理，target 与冲突只有 Planner 能算。
+    itemsDropped = Signal(list, tuple)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -359,6 +375,88 @@ class PlanTreeModel(QAbstractItemModel):
         item.included = Qt.CheckState(value) == Qt.CheckState.Checked
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
         return True
+
+    # -- 拖拽改类目（需求 10.11）---------------------------------------
+
+    def supportedDropActions(self) -> Qt.DropAction:  # noqa: N802
+        return Qt.DropAction.MoveAction
+
+    def mimeTypes(self) -> list[str]:  # noqa: N802
+        return [MIME_ITEM_PATHS]
+
+    def mimeData(self, indexes: Sequence[QModelIndex]) -> QMimeData:  # noqa: N802
+        """把被拖条目的绝对路径序化进 MIME。
+
+        携带路径而非行号：拖拽过程中可能发生 fetchMore，行号会失效，
+        而绝对路径正是 override 的 key（需求 19.2），全链路用同一把钥匙。
+        """
+        paths: list[str] = []
+        for index in indexes:
+            if index.column() != Column.NAME:
+                continue
+            item = self.item_at(index)
+            if item is not None:
+                paths.append(str(item.entry.path))
+        mime = QMimeData()
+        mime.setData(MIME_ITEM_PATHS, "\n".join(paths).encode("utf-8"))
+        return mime
+
+    def canDropMimeData(  # noqa: N802
+        self,
+        data: QMimeData,
+        action: Qt.DropAction,
+        row: int,  # noqa: ARG002
+        column: int,  # noqa: ARG002
+        parent: QModelIndex,
+    ) -> bool:
+        if action is not Qt.DropAction.MoveAction:
+            return False
+        if not data.hasFormat(MIME_ITEM_PATHS):
+            return False
+        # 只接受落在类目节点上，且仅限「整理后」视图——整理前视图的分组是
+        # 源目录，把文件拖进去没有「改类目」的语义。
+        if self._mode is not ViewMode.AFTER:
+            return False
+        if not parent.isValid():
+            return False
+        node = self._nodes[parent.internalId()]
+        return node.is_group
+
+    def dropMimeData(  # noqa: N802
+        self,
+        data: QMimeData,
+        action: Qt.DropAction,
+        row: int,
+        column: int,
+        parent: QModelIndex,
+    ) -> bool:
+        if not self.canDropMimeData(data, action, row, column, parent):
+            return False
+        node = self._nodes[parent.internalId()]
+        target_parts = tuple(node.label.split("/"))
+
+        raw = bytes(data.data(MIME_ITEM_PATHS)).decode("utf-8")
+        paths = [Path(p) for p in raw.splitlines() if p]
+        # 已在目标类目里的条目不算改动，避免记入无意义的 override
+        moved = [p for p in paths if self._category_of(p) != target_parts]
+        if not moved:
+            return False
+        self.itemsDropped.emit(moved, target_parts)
+        # 数据不在模型内部搬动：MainWindow 记入 override 后重算整个方案
+        # （target 与冲突必须重新预检），重算完成时模型整体 reset。
+        # 返回 True 只告诉视图「落点已接受」；视图处在 InternalMove 模式，
+        # 不会再自行删除源行。
+        return True
+
+    def _category_of(self, path: Path) -> tuple[str, ...] | None:
+        plan = self._plan
+        if plan is None:
+            return None
+        for item in self._items:
+            if item.entry.path == path:
+                category = plan.category_by_id(item.category_id)
+                return category.path_parts if category else None
+        return None
 
     # -- 辅助 -------------------------------------------------------------
 

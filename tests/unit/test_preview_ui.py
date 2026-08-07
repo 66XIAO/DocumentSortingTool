@@ -20,6 +20,7 @@ from app.core.scanner import ScanSession
 from app.ui.widgets.plan_filter import PlanFilterProxy
 from app.ui.widgets.plan_tree_model import (
     FETCH_BATCH,
+    MIME_ITEM_PATHS,
     ROLE_IS_GROUP,
     Column,
     PlanTreeModel,
@@ -446,3 +447,147 @@ def test_item_exclusion_is_recorded_as_override(
     flow._set_item_included(root / "a.pdf", False)
 
     assert plan.overrides.items[str(root / "a.pdf")].included is False
+
+
+# ---------------------------------------------------------------------------
+# 拖拽改类目（需求 10.11）
+# ---------------------------------------------------------------------------
+
+
+def _group_index(model: PlanTreeModel, label: str) -> object:
+    for row, text in enumerate(model.group_labels()):
+        if text == label:
+            return model.index(row, 0)
+    raise AssertionError(f"找不到类目分组 {label!r}，实际：{model.group_labels()}")
+
+
+def _first_item_index(model: PlanTreeModel, group_label: str) -> object:
+    parent = _group_index(model, group_label)
+    model.fetchMore(parent)
+    return model.index(0, Column.NAME, parent)
+
+
+def test_mime_data_carries_item_paths(qtbot, sample) -> None:
+    root, result = sample
+    model = PlanTreeModel()
+    model.set_plan(result.plan)
+    index = _first_item_index(model, "财务/发票")
+
+    mime = model.mimeData([index])
+
+    assert mime.hasFormat(MIME_ITEM_PATHS)
+    raw = bytes(mime.data(MIME_ITEM_PATHS)).decode("utf-8")
+    assert raw == str(root / "发票_2024.pdf")
+
+
+def test_drop_on_group_emits_items_dropped(qtbot, sample) -> None:
+    """需求 10.11：拖到另一类目节点上发出 (路径列表, 目标类目) 信号。"""
+    root, result = sample
+    model = PlanTreeModel()
+    model.set_plan(result.plan)
+    received: list[tuple[list, tuple]] = []
+    model.itemsDropped.connect(lambda paths, parts: received.append((paths, parts)))
+
+    mime = model.mimeData([_first_item_index(model, "财务/发票")])
+    target = _group_index(model, "图片")
+    accepted = model.dropMimeData(mime, Qt.DropAction.MoveAction, -1, -1, target)
+
+    assert accepted is True
+    assert received == [([root / "发票_2024.pdf"], ("图片",))]
+
+
+def test_drop_into_same_category_is_noop(qtbot, sample) -> None:
+    """拖回原类目不算改动，不该记入无意义的 override。"""
+    _root, result = sample
+    model = PlanTreeModel()
+    model.set_plan(result.plan)
+    received: list[object] = []
+    model.itemsDropped.connect(lambda *args: received.append(args))
+
+    mime = model.mimeData([_first_item_index(model, "财务/发票")])
+    target = _group_index(model, "财务/发票")
+    accepted = model.dropMimeData(mime, Qt.DropAction.MoveAction, -1, -1, target)
+
+    assert accepted is False
+    assert received == []
+
+
+def test_drop_rejected_in_before_mode(qtbot, sample) -> None:
+    """整理前视图按源目录分组，拖进去没有「改类目」语义。"""
+    _root, result = sample
+    model = PlanTreeModel()
+    model.set_plan(result.plan)
+    mime = model.mimeData([_first_item_index(model, "财务/发票")])
+
+    model.set_mode(ViewMode.BEFORE)
+    target = model.index(0, 0)
+
+    assert not model.canDropMimeData(mime, Qt.DropAction.MoveAction, -1, -1, target)
+
+
+def test_drop_rejected_on_file_row(qtbot, sample) -> None:
+    """只能落在类目节点上，文件行不是合法落点。"""
+    _root, result = sample
+    model = PlanTreeModel()
+    model.set_plan(result.plan)
+    mime = model.mimeData([_first_item_index(model, "财务/发票")])
+    file_row = _first_item_index(model, "图片")
+
+    assert not model.canDropMimeData(mime, Qt.DropAction.MoveAction, -1, -1, file_row)
+
+
+def test_preview_page_forwards_drop_signal(qtbot, sample) -> None:
+    """模型的 itemsDropped 要原样转发为页面的 itemsCategoryChanged。"""
+    from app.ui.pages.preview_page import PreviewPage
+
+    root, result = sample
+    page = PreviewPage()
+    qtbot.addWidget(page)
+    page.show_result(result)
+    received: list[tuple[list, tuple]] = []
+    page.itemsCategoryChanged.connect(
+        lambda paths, parts: received.append((paths, parts))
+    )
+
+    mime = page.model.mimeData([_first_item_index(page.model, "财务/发票")])
+    target = _group_index(page.model, "图片")
+    page.model.dropMimeData(mime, Qt.DropAction.MoveAction, -1, -1, target)
+
+    assert received == [([root / "发票_2024.pdf"], ("图片",))]
+
+
+def test_tree_view_enables_internal_move(qtbot, sample) -> None:
+    """视图开启 InternalMove：drop 后不自行删除源行，行变更由重算 reset 完成。"""
+    from PySide6.QtWidgets import QAbstractItemView
+
+    from app.ui.pages.preview_page import PreviewPage
+
+    page = PreviewPage()
+    qtbot.addWidget(page)
+
+    assert (
+        page.tree.dragDropMode()
+        is QAbstractItemView.DragDropMode.InternalMove
+    )
+    assert page.tree.defaultDropAction() is Qt.DropAction.MoveAction
+
+
+def test_drag_change_is_recorded_as_override(
+    qtbot, tmp_path: Path, guard: SafetyGuard
+) -> None:
+    """需求 10.15／19.1：拖拽改类目必须记入 override，key 是绝对路径。"""
+    from app.services.plan_service import PlanService
+    from app.services.scan_service import ScanService
+    from app.ui.main_window import SortFlowPage
+
+    root = build_tree(tmp_path / "下载", {"a.pdf": "x", "b.pdf": "y"})
+    scan = ScanService(guard=guard)
+    plan = PlanService(guard=guard)
+    flow = SortFlowPage(scan, Settings(), plan)
+    qtbot.addWidget(flow)
+
+    flow._set_items_category([root / "a.pdf", root / "b.pdf"], ("合同协议",))
+
+    assert plan.overrides.items[str(root / "a.pdf")].category_path == ("合同协议",)
+    assert plan.overrides.items[str(root / "b.pdf")].category_path == ("合同协议",)
+

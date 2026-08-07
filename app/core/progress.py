@@ -74,6 +74,7 @@ class ProgressThrottle:
         self._clock = clock
         self._lock = threading.Lock()
         self._pending: ProgressSnapshot | None = None
+        self._latest: ProgressSnapshot | None = None
         self._last_emit_at: float | None = None
         self._emitted = 0
 
@@ -95,6 +96,7 @@ class ProgressThrottle:
         """
         with self._lock:
             now = self._clock()
+            self._latest = snapshot
             if self._last_emit_at is not None and now - self._last_emit_at < self._interval:
                 self._pending = snapshot
                 return False
@@ -109,11 +111,13 @@ class ProgressThrottle:
     def finish(self, snapshot: ProgressSnapshot | None = None) -> bool:
         """终止通知：无条件发出终值，不受 200ms 间隔限制。
 
-        这是「不丢计数」的兜底。发出的快照 ``final`` 置为 True，使下游（以及属性
-        测试）能把它与流式通知区分开。
+        这是「不丢计数」的兜底，契约是「最后一条通知必定 ``final=True`` 且携带
+        终值」。因此即使 pending 为空（末次 update 恰好已经发出去了），也要用最近
+        一次的快照再发一条终止通知——多一条通知无害，而契约里少一个「必定」会让
+        下游不得不自己判断「这是不是最后一条」。
         """
         with self._lock:
-            candidate = snapshot if snapshot is not None else self._pending
+            candidate = snapshot or self._pending or self._latest
             if candidate is None:
                 return False
             self._pending = None
@@ -128,6 +132,7 @@ class ProgressThrottle:
         """复用同一个节流器处理下一阶段时清空状态。"""
         with self._lock:
             self._pending = None
+            self._latest = None
             self._last_emit_at = None
             self._emitted = 0
 

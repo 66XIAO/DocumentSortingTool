@@ -99,6 +99,8 @@ class PreviewPage(QWidget):
     createCategory = Signal(object)
     deleteCategory = Signal(object)
     itemIncludedChanged = Signal(object, bool)
+    #: 拖拽改类目（需求 10.11）：(绝对路径列表, 目标类目 path_parts)
+    itemsCategoryChanged = Signal(list, tuple)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -230,14 +232,20 @@ class PreviewPage(QWidget):
         self.tree.setModel(self.proxy)
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tree.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        # 多选：拖拽改类目（需求 10.11）允许一次拖多个条目
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # InternalMove：只在树内部拖拽，且视图不会在 drop 后自行删除源行——
+        # 行的增删由重算后的模型 reset 统一完成
+        self.tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.tree.setDropIndicatorShown(True)
         header = self.tree.header()
         header.setSectionResizeMode(Column.NAME, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(Column.ACTION, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(Column.REASON, QHeaderView.ResizeMode.Stretch)
         self.tree.selectionModel().currentChanged.connect(self._on_current_changed)
         self.model.dataChanged.connect(self._on_model_data_changed)
+        self.model.itemsDropped.connect(self.itemsCategoryChanged)
         layout.addWidget(self.tree, stretch=1)
 
         self._space_warning = BodyLabel("", pane)

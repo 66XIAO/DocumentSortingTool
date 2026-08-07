@@ -264,7 +264,10 @@
   - 勾选任一子文件夹时把 `scan.scope` 置为 `selected_subfolders`
   - _需求: 1.8, 2.6, 2.7, 2.8, 2.9_
 
-- [ ] 12. 建立测试基础设施并实现 M1 属性测试
+- [x] 12. 建立测试基础设施并实现 M1 属性测试
+  - **已完成。** `tests/fixtures/{trees,generators,doubles,models,execution}.py` + `tests/properties/test_p01_admission.py`、`test_p03_scan_model.py`、`test_p30_settings_roundtrip.py`、`test_p40_structure.py`
+  - 生成器的一处收窄：**文件名不产出非法字符与 Windows 保留设备名**（`CON`、`COM1` 等）。那种文件在 NTFS 上根本创建不出来，生成它们只会让 `build_tree` 报错，测不到任何被测逻辑。非法字符那一维改由**类目名**承载（`category_segments`，经 `sanitize_parts` 清洗），保留名的处理由 `test_fsops` 的例子级测试覆盖
+  - `SafetyGuard` 在测试里必须构造成 `SafetyGuard(system_roots=(), denied_segments=())`：pytest 的 `tmp_path` 位于 `AppData\Local\Temp` 之下，默认守卫会把它判成系统路径而拒绝准入
   - 在 `tests/fixtures/` 实现目录树生成器 `file_trees`（递归结构、可控深度宽度、物化到 `tmp_path`），覆盖 `design.md`「共用的生成器与替身」表中的全部维度：文件名（中文/空格/点开头/超长/含非法字符）、目录形状（空目录/只含子目录/仅含 `desktop.ini` 与 `Thumbs.db`/`.docsort`/深层嵌套）、勾选组合（空集/单个/父子同勾/只勾子/全选）
   - 实现替身：`FakeClock`、`VolumeStub`、`TrashRecorder`、`MemoryKeyring`（`FakeProvider` 留到 M5）
   - 在 `tests/fixtures/models.py` 实现参照实现 `naive_scan(root, scope)`，用 `os.walk` 直接算出应有 entries 与子文件夹统计
@@ -384,7 +387,8 @@
   - 在 `services/plan_service.py` 包装 `Planner`，暴露方案生成与重算的信号；持有会话内的 `OverrideSet`（M3 接入）
   - _需求: 9.1_
 
-- [ ] 21. 实现 M2 属性测试
+- [x] 21. 实现 M2 属性测试
+  - **已完成。** `tests/properties/test_p02_plan_invariants.py`（属性 2、7、12、16、17）、`test_p08_rules.py`（属性 8、9、10）
   - 属性 2（目标路径永不逃逸且形态统一）、属性 7 与 9（分类管线阈值、兜底、确定性）、属性 8（规则匹配与优先级）、属性 10（规则与配置文件破坏容错）、属性 16（冲突五态完备性）、属性 17（方案结构与幂等 skip）
   - 生成器需覆盖配置组合维度：四种策略 × 三种冲突策略 × `include_hidden` 真假
   - _需求: 3.7, 3.8, 3.13, 4.3, 4.5, 4.9, 9.2-9.13, 18.2_
@@ -495,7 +499,8 @@
   - `overwrite` 冲突策略需二次确认后才允许启动执行
   - _需求: 10.12, 9.6_
 
-- [ ] 30. 实现 M3 属性测试
+- [x] 30. 实现 M3 属性测试
+  - **已完成。** `tests/properties/test_p20_overrides.py`（属性 18-23）、`test_p40_structure.py`（属性 40）、`tests/unit/test_ui_smoke.py`（属性 41）、`tests/unit/test_preview_ui.py`
   - 属性 18 与 19（预览编辑动作与方案状态一致性）、属性 20（override 叠加与朴素实现一致）、属性 21（六场景重算保留 override）、属性 22（override 优先性与失效处理）、属性 23（重算稳定性）、属性 41（视觉令牌取值与控件存在性）
   - 属性 41 只断言令牌取值与控件存在性，不做像素级断言；UI 状态联动用 pytest-qt
   - _需求: 10.1-10.16, 19.1-19.14_
@@ -508,7 +513,28 @@
 交付：`Executor`、`Journal`、`UndoManager`、`HistoryManager`、执行结果页、历史记录页。
 本阶段应通过属性：6（不含清理维度）、12（不含 LLM 维度）、24、25、26、27、28、29、31、32、33、34、36。
 
-- [ ] 31. 实现 Journal
+**M4 已完成（任务 31-41 全部落地）。** 全量测试 597 项通过，其中 M4 新增 138 项：
+`test_journal.py` 17、`test_executor.py` 29、`test_undo.py` 24、`test_history.py` 17、
+`test_result_ui.py` 20、`test_p24_execution.py` 13、`test_p28_journal_roundtrip.py` 7、
+`test_p31_undo.py` 11。另有两个自检脚本（不进 pytest，供人工复核）：
+`_m4sandbox.py` 在项目目录下真实走一遍扫描 → 方案 → 模拟 → 执行 → 撤销 → 重做 → 再撤销，
+`_launchcheck.py` 走 `app/main.py` 的真实装配路径确认「双击能打开」。
+
+M4 期间从被测代码里改出来的**六个实际缺陷**（全部由新写的测试逼出来，不是顺手重构）：
+
+| 位置 | 问题 | 后果 |
+| --- | --- | --- |
+| `journal.read_records` | 用 `splitlines()` 切 JSONL | 文件名含 U+2028/U+2029/U+0085 时该条记录解析失败，**那个文件的撤销依据静默消失** |
+| `executor._handle` | 源文件 stat 失败时直接写 failed，无前驱 intent | 未收尾检测与撤销配对失去依据（违反属性 27） |
+| `executor._move` | `cross_volume` 写成 `not same_volume(target, target.parent)` | 该字段恒为 False，跨卷记录不可信 |
+| `executor._cleanup` | 模拟运行时 `moved_sources` 为空 | 需求 20.20 的待删目录清单恒为空 |
+| `history.list_runs` | 只按 `started_at` 排序 | 同一秒内的两条 run 谁更新取决于 `iterdir()` 顺序，**保留策略删哪一条不确定** |
+| `result_page.show_undo_report` | 把 `Outcome` 塞进 `action` 字段 | 类型错位，CSV 导出会写出无意义的动作列 |
+
+- [x] 31. 实现 Journal
+  - **已完成。** `app/core/journal.py`，测试见 `tests/unit/test_journal.py`（17 条）与 `tests/properties/test_p28_journal_roundtrip.py`（7 条）
+  - **JSONL 读取按 `"\n"` 切，不用 `splitlines()`**：后者还会在 U+0085、U+2028、U+2029 处断行，而 `json.dumps(ensure_ascii=False)` 不转义这三个字符。Windows 文件名允许含 U+2028（只禁 `\ / : * ? " < > |` 与控制字符），一旦含了，那条记录就被切成两半、解析失败——**那个文件的撤销依据会静默消失**。这条由属性 28 的生成器钉住
+  - 镜像写失败只记 warning 不中断：根目录可能只读或空间不足，但那不该让整次整理失败（需求 13.6）
   - 在 `core/journal.py` 实现 `manifest.json` 写入：完整 `SortPlan`、源树快照（path、size、mtime）、`scan.scope`、已勾选子文件夹清单、冲突策略、`remove_empty_dirs`、生效的 `OverrideSet`、`run_id`、app 版本
   - 实现 `journal.jsonl` 追加写：动手前写 `intent`，操作结束写 `done` 或 `failed`，每条写入后对文件描述符 `fsync`
   - 主副本写 `%APPDATA%\DocSorter\history\<run_id>\`，根目录 `.docsort\` 写镜像副本
@@ -516,7 +542,12 @@
   - _需求: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.9, 13.10, 19.11_
   - _属性: 28, 40_
 
-- [ ] 32. 实现 Executor 的执行语义
+- [x] 32. 实现 Executor 的执行语义
+  - **已完成。** `app/core/executor.py`，测试见 `tests/unit/test_executor.py`（29 条）与 `tests/properties/test_p24_execution.py`（13 条）
+  - **stat 失败也先写 intent 再写 failed**：属性 27 要求「每条 done/failed 都存在 seq 更小的同操作 intent」。原实现在读源文件失败时直接写 failed，产出一条没有前驱的 failed，未收尾检测与撤销的配对逻辑就失去依据
+  - **跨卷判定必须在动手之前算**：移动之后源路径已不存在，`same_volume` 会退化成「拿最近的已存在祖先去比」，得到的答案与实际走过的分支无关。原实现把 `cross_volume` 写成 `not same_volume(target, target.parent)`，恒为 False
+  - **模拟运行也记录 `moved_source`**：需求 20.20 要求模拟运行列出待删空目录，而候选集合的输入是「哪些文件会被移出」。新增纯函数 `predict_removed_dirs()`，按深度降序累积「已判定会消失的子目录」，使嵌套情形的预测与真实执行逐级删除的结果一致（属性 38 因此成立，而非另写一套判定）
+  - `ActionKind.COPY` 未实现执行语义：planner 默认 `default_action=MOVE`，UI 也没有产出 COPY 的入口；需求未给出复制的撤销语义（撤销该删掉副本还是搬回去），留到有明确需求时再做
   - 在 `core/executor.py` 实现单线程顺序执行（保证 journal `seq` 全序与撤销逆序可靠，刻意不并发）
   - 同卷：`os.replace` 原子重命名
   - 跨卷：复制到目标 → 校验 size 与 sha256 一致 → 源文件移入回收站；校验失败则删除已复制的目标、保留源文件、该条目标记 `failed`
@@ -529,7 +560,12 @@
   - _需求: 10.10, 11.8, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8_
   - _属性: 24, 25, 26, 27_
 
-- [ ] 33. 实现执行前的防护与可取消
+- [x] 33. 实现执行前的防护与可取消
+  - **已完成。** 强制首次模拟运行与确认框在 `SortFlowPage._execute()`；3 秒取消窗口新增 `CountdownDialog` / `countdown_to_start()`（`app/ui/theme/components.py`）；停止走 `ResultPage.stopRequested → ExecuteService.cancel()`
+  - 首次模拟运行的「首次」以根目录为粒度，记在 `settings.ui.dry_run_completed_roots`
+  - **取消窗口的取消按钮设为 default 且最小高度 48px**：这一刻默认路径应当是「还能反悔」，不是「继续」
+  - 新增 `ExecutionReport.stopped` 字段：需求 11.7 要求停止后提供「回滚已完成部分」，UI 得先知道这次是被停下来的。靠在 skipped 的 reason 里找字符串太脆
+  - 「回滚已完成部分」就是对本次 run 撤销——journal 里只有已完成部分的 done 记录，所以撤销天然只回滚那一部分。ResultPage 在 `stopped` 时把撤销按钮文案改成这句，动作不变
   - 首次对某根目录触发执行时先强制运行一次模拟运行并展示结果，之后才允许真实执行
   - 确认对话框显示具体数字与可撤销说明，例如「将移动 1,240 个文件到 8 个文件夹，此操作可完整撤销」
   - 确认后提供 3 秒取消窗口与大号取消按钮；窗口内取消则放弃执行、全部文件位置不变
@@ -537,7 +573,11 @@
   - _需求: 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8_
   - _属性: 29_
 
-- [ ] 34. 实现 UndoManager
+- [x] 34. 实现 UndoManager
+  - **已完成。** `app/core/undo.py`，测试见 `tests/unit/test_undo.py`（24 条，覆盖任务 41 的六个场景）与 `tests/properties/test_p31_undo.py`（11 条）
+  - **mtime 比对留 2 秒容差**（`MTIME_TOLERANCE`）：FAT 的时间精度是 2 秒，要求完全相等会把正常文件误判成「被外部改过」，从而拒绝还原——那是把安全机制变成了故障
+  - **停在 intent 的条目由 `undo()` 自己列入需人工确认**，不放在 UI 里：这样「全部撤销之后 intent 条目必被列出」（需求 14.11）对崩溃恢复对话框、历史记录页、Ctrl+Z 三条入口同时成立
+  - 重做走 `undo(f"{run_id}.undo")`，不是另写一套：撤销 journal 的 kind 与正向相同、src/dst 互换，因此「撤销的撤销」天然等于重做，幂等性（需求 14.13）不依赖额外逻辑
   - 在 `core/undo.py` 实现三阶段撤销，顺序固定不可调换：① 按 `removed_dir` 逆序重建目录 → ② 按 `done` 记录逆序还原文件 → ③ 删除 journal 中标记 `created_dir` 且当前为空的目录
   - 同卷原操作用反向 `os.replace` 还原；跨卷原操作把目标文件复制回源路径、校验一致后删除目标副本
   - 还原前比对文件当前 size 与 mtime 和 journal 记录值，不一致则跳过、列入「需人工确认」并提供源与目标的并排对比信息
@@ -546,44 +586,69 @@
   - _需求: 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 14.12, 14.13_
   - _属性: 31, 32, 33, 34_
 
-- [ ] 35. 实现 HistoryManager
+- [x] 35. 实现 HistoryManager
+  - **已完成。** `app/core/history.py`，测试见 `tests/unit/test_history.py`（17 条）与 `test_p31_undo.py` 的属性 36
+  - **列表排序键改成 `(started_at, run_id)`**：manifest 的时间戳只到秒，同一秒内启动两次会得到相同的 `started_at`，只按时间排序时「谁更新」取决于 `iterdir()` 的返回顺序——保留策略要删东西，不能不确定。这条是属性 36 跑出来的反例
+  - 撤销状态用 `undone.marker` 标记文件而非改写 manifest：manifest 是执行前的现场快照，撤销是之后发生的事
+  - 未收尾的 run 永不被保留策略删掉——那正是用户最需要它的时候
   - 在 `core/history.py` 实现 run 列表读取、`RunMeta` 维护、任意未撤销 run 的撤销入口
   - 保留策略默认 20 条 / 30 天，超出上限或超期时删除最旧 run 目录；条数与天数可配置
   - 实现未收尾 run 检测：存在 `intent` 记录但缺少对应 `done` 或 `failed` 记录即为未收尾
   - _需求: 13.7, 15.2, 15.3, 15.4, 15.5_
   - _属性: 36_
 
-- [ ] 36. 实现 ExecuteService 与 UndoService
-  - 在 `services/execute_service.py` 与 `services/undo_service.py` 把 `Executor` 与 `UndoManager` 放进 `QThread`，桥接进度与停止信号
-  - 两者线程模型同构：单线程顺序执行
+- [x] 36. 实现 ExecuteService 与 UndoService
+  - **已完成。** 两者同放在 `app/services/execute_service.py`（不拆成 `undo_service.py`：它们共用 history 目录与同一套线程模型，拆开只会让读者在两个文件间跳）
+  - 新增 `start_resume()`：崩溃恢复的「恢复执行」接着往同一份 journal 写，方案取自 manifest 而非重新规划——重新规划会得到一份**新**方案，而用户当初确认的是旧那份
+  - 端到端测试见 `tests/unit/test_result_ui.py::test_execute_then_undo_through_services`（真 QThread 走一遍执行 + 撤销）
   - _需求: 12.7, 11.6, 11.7_
 
-- [ ] 37. 实现执行结果页
+- [x] 37. 实现执行结果页
+  - **已完成。** `app/ui/pages/result_page.py`，测试见 `tests/unit/test_result_ui.py`
+  - 「需人工确认」作为第四个标签页，仅在有内容时显示并自动切过去（需求 14.6）
+  - CSV 用 `utf-8-sig`：Excel 打开不带 BOM 的 UTF-8 CSV 会把中文显示成乱码
+  - UI 测试里用 `isHidden()` 而不是 `isVisible()`：页面本身没 `show()`，离屏平台下所有子控件的 `isVisible()` 恒为 False，那样的断言恒真、测不到任何东西
   - 执行中显示进度条与实时日志表
   - 结束后按成功、跳过、失败三组展示报告并显示各组计数
   - 提供「撤销本次整理」并把 Ctrl+Z 绑定到该动作、「重做」（撤销完成后出现）、「打开目录」（资源管理器定位根目录）
   - 导出 CSV，字段为源路径、目标路径、动作、结果、理由；行数等于三组计数之和（由 `to_csv_rows()` 保证）
   - _需求: 14.1, 14.10, 16.1, 16.2, 16.3, 16.4, 16.5_
 
-- [ ] 38. 实现历史记录页
+- [x] 38. 实现历史记录页
+  - **已完成。** `app/ui/pages/history_page.py`。未收尾的 run 显示为「未收尾」且**仍可撤销**——那正是最需要撤销的时候
   - 时间轴形式列出每条 run 的时间、根目录、文件数、策略、撤销按钮与撤销状态
   - 已撤销的 run 标记「已撤销」并禁用其撤销按钮
   - _需求: 15.1, 15.2, 15.6_
 
-- [ ] 39. 实现崩溃恢复流程
+- [x] 39. 实现崩溃恢复流程
+  - **已完成。** `MainWindow._check_unfinished()` + 新增 `ChoiceDialog` / `choose_option()`
+  - **三个出口需要三个按钮**：`confirm()` 只有两个，硬塞第三个只能靠「取消 = 第三种意思」这种暗示，而这是一次可能动上千文件的决定。`ChoiceDialog` 把最后一个（最保守的「忽略」）设为 default，回车不会误触发破坏性选项
+  - 「恢复执行」只搬 `resume().at_source` 里的条目：源已不在说明那次移动其实做成了、只是日志没写完，再搬一次会覆盖目标位置的文件
+  - `Journal.open()` 现在会把 `seq` 接上已有记录——续跑重开同一份 journal，若从 1 重新计数就出现两条 seq 相同的记录，撤销的「按 done 逆序还原」语义随之失效
   - 启动时调用 `HistoryManager` 的未收尾检测，存在未收尾 run 时弹对话框提供「恢复执行」「全部撤销」「忽略」三个选项
   - 选择「全部撤销」时还原全部 `done` 操作，并把停留在 `intent` 状态的条目列入「需人工确认」列表
   - _需求: 13.7, 13.8, 14.11_
   - _属性: 33_
 
-- [ ] 40. 实现 M4 属性测试
+- [x] 40. 实现 M4 属性测试
+  - **已完成。** `tests/properties/test_p24_execution.py`（属性 6、24、25、26、27）、`test_p28_journal_roundtrip.py`（属性 28、29）、`test_p31_undo.py`（属性 31、32、33、34、36）；属性 12 的非 LLM 维度已由 M2 的 `test_p02_plan_invariants.py` 覆盖
+  - 公共装配抽到 `tests/fixtures/execution.py`：执行与撤销**必须在完全相同的装配上比较**，否则「撤销后与执行前一致」可能是装配差异造成的假绿
+  - **属性 6 做了一处收窄，理由写在测试模块开头**：属性正文要求「未勾选的子文件夹路径集合完全一致」，但类目目录名很可能与根目录下已存在的子文件夹同名（默认规则产出「文档」「图片」，用户根目录里本来就常有同名文件夹），此时把文件并入那个文件夹正是用户期待的行为。改为断言更强的两条：① 未勾选目录中原有的路径一条都不能消失；② 新增路径必须全部来自本次方案的目标路径及其父目录
+  - **属性 31 的前提是非覆盖策略**：覆盖策略下被覆盖的文件进了回收站（需求 12.4），撤销不会、也不该从回收站往外捞，于是「整树路径集合与执行前完全一致」天然不成立
+  - **属性 24 的计数一致只在无 failed 时可比**：failed 由外部因素造成（权限、占用），模拟运行不可能预知，硬要求一致会把一条真属性写成假属性
+  - fsync 的断言放在 `test_journal.py::test_every_append_is_fsynced`（monkeypatch `os.fsync` 计数），不放属性测试里——它需要函数级 fixture，而属性测试用的是 session 级 `tmp_path_factory`
+  - 属性测试确实会咬人的证据：把 `_restore_files` 的 `reversed(done)` 改成 `done`，属性 31 的顺序断言与 `test_undo.py` 立刻失败；属性 36 自己跑出了 HistoryManager 排序不确定的反例
   - 属性 6（配置组合下的方案与执行一致性，暂不含清理维度）、属性 12（方案完整覆盖，暂不含 LLM 维度）、属性 24 至 27（执行语义、内容不变性、跨卷校验、回收站集合）、属性 28（journal 往返与 fsync 顺序）、属性 29（执行前防护与取消）、属性 31 至 34（撤销往返、外部修改拒绝覆盖、崩溃恢复、撤销重做幂等）、属性 36（历史保留策略）
   - 跨卷分支用 `VolumeStub` 模拟，不依赖真实第二个卷；回收站用 `TrashRecorder` 断言路径集合；保留策略用 `FakeClock`
   - 中断位置生成器覆盖首条前、中间随机条、末条后
   - _需求: 11.2-11.8, 12.1-12.8, 13.1-13.10, 14.2-14.13, 15.2-15.4_
   - _属性: 6, 12, 24, 25, 26, 27, 28, 29, 31, 32, 33, 34, 36_
 
-- [ ] 41. 实现撤销专项测试
+- [x] 41. 实现撤销专项测试
+  - **已完成。** `tests/unit/test_undo.py`，六个场景逐一对应，另加端到端自检脚本 `_m4sandbox.py`（在项目目录下真实走一遍扫描 → 方案 → 模拟 → 执行 → 撤销 → 重做 → 再撤销，40 项全通过）
+  - 「进程被强制终止」用**删掉最后一条 done 日志行**来模拟，而不是造一条孤立 intent：前者才是真实形态（文件已经搬了、日志没写完），且顺带覆盖 `resume()` 的 `at_target` 分支
+  - 「还原失败」用**在原目录位置放一个同名文件**触发：`mkdir(exist_ok=True)` 遇到同名文件仍会抛 `FileExistsError`，这比构造只读目录可靠（Windows 的只读目录照样允许建文件）
+  - 「仅含 desktop.ini 的目录算非空」必须给 desktop.ini **打上隐藏属性**才测得到：普通 desktop.ini 会被归入 `_未分类` 一起搬走，目录就真的空了。现实中它就是隐藏的
   - 执行进程被强制终止后重启，断言未收尾 run 被正确识别且「全部撤销」能完成回滚
   - 移动后源文件被外部修改（改 size 或 mtime），断言撤销拒绝覆盖并列入「需人工确认」
   - 跨卷复制中途失败，断言源文件仍在（或在回收站）且目标副本已清理

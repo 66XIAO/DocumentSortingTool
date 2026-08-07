@@ -686,6 +686,9 @@ class ExecutionReport:
     needs_manual_review: list[ResultRow] = field(default_factory=list)
     elapsed_ms: int = 0
     dry_run: bool = False
+    #: 用户中途点了「停止」。需求 11.7 要求停止后提供「回滚已完成部分」，UI 得先知道
+    #: 这次是被停下来的——靠在 skipped 的 reason 里找字符串太脆，加一个字段更诚实。
+    stopped: bool = False
 
     def to_csv_rows(self) -> list[dict[str, str]]:
         """三组按顺序拼接。
