@@ -10,6 +10,14 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from app.core.llm.provider import (
+    ChatRequest,
+    ChatResponse,
+    FailureKind,
+    Provider,
+    ProviderError,
+)
+
 
 class FakeClock:
     """可手动推进的单调时钟。"""
@@ -116,3 +124,42 @@ def stub_same_volume(
     from app.core import fsops
 
     monkeypatch.setattr(fsops, "same_volume", decision)  # type: ignore[attr-defined]
+
+
+class FakeProvider:
+    """按脚本返回结果的 Provider 替身。需求 44 测试用。
+
+    可注入五类失败，记录调用次数与请求历史。
+    """
+
+    def __init__(
+        self,
+        *,
+        scripted_responses: list[str] | None = None,
+        fail_with: FailureKind | None = None,
+        fail_message: str = "injected failure",
+    ) -> None:
+        self.name = "fake"
+        self._scripted = list(scripted_responses or [])
+        self._fail_with = fail_with
+        self._fail_message = fail_message
+        self.call_count = 0
+        self.requests: list[ChatRequest] = []
+
+    def chat(self, request: ChatRequest, timeout_seconds: float) -> ChatResponse:
+        self.call_count += 1
+        self.requests.append(request)
+
+        if self._fail_with is not None:
+            raise ProviderError(self._fail_with, self._fail_message)
+
+        if self._scripted:
+            content = self._scripted.pop(0)
+            return ChatResponse(content=content)
+
+        return ChatResponse(content="{}")
+
+    def test_connectivity(self, timeout_seconds: float = 10.0) -> str:
+        if self._fail_with is not None:
+            raise ProviderError(self._fail_with, self._fail_message)
+        return "fake ok"

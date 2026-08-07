@@ -150,6 +150,10 @@ class PreviewPage(QWidget):
         self._ai_switch = SwitchButton(self)
         self._set_switch_text(self._ai_switch, "智能分类")
         self._ai_switch.setEnabled(False)
+        if hasattr(self._ai_switch, "checkedChanged"):
+            self._ai_switch.checkedChanged.connect(self.aiToggled.emit)  # type: ignore[attr-defined]
+        else:
+            self._ai_switch.toggled.connect(self.aiToggled.emit)  # type: ignore[attr-defined]
         self._ai_hint = CaptionLabel("未配置模型服务", self)
         ai_box.addWidget(self._ai_switch)
         ai_box.addWidget(self._ai_hint)

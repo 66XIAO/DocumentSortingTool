@@ -35,8 +35,10 @@ from app.services.scan_service import ScanService
 from app.ui.pages.history_page import HistoryPage
 from app.ui.pages.preview_page import PreviewPage
 from app.ui.pages.result_page import ResultPage
+from app.ui.pages.rules_page import RulesPage
 from app.ui.pages.scan_page import ScanPage
 from app.ui.pages.select_page import SelectPage
+from app.ui.pages.settings_page import SettingsPage
 from app.ui.theme import (
     SPACE_XL,
     FLUENT_AVAILABLE,
@@ -645,18 +647,10 @@ class MainWindow(FluentWindow):
         self._refresh_history()
         self._apply_retention()
         self._check_unfinished()
-        self.rules_page = _Placeholder(
-            "规则管理",
-            "关键词与扩展名规则的编辑将在 M5 阶段落地。",
-            "rulesPage",
-            self,
-        )
-        self.settings_page = _Placeholder(
-            "设置",
-            "AI、隐私档、保留策略等选项将在 M5 阶段落地。",
-            "settingsPage",
-            self,
-        )
+        self.rules_page = RulesPage(self)
+        self.rules_page.rulesSaved.connect(self._on_rules_saved)
+        self.settings_page = SettingsPage(self._settings, self._settings_manager, self)
+        self.settings_page.settingsChanged.connect(self._on_settings_changed)
 
         self._build_navigation()
 
@@ -689,6 +683,18 @@ class MainWindow(FluentWindow):
             "设置",
             position=NavigationItemPosition.BOTTOM,
         )
+
+    def _on_rules_saved(self) -> None:
+        """规则保存后重新加载引擎。需求 4.8。"""
+        from app.core.rules import RuleEngine, builtin_rules
+        rules_text = (self._settings_manager.base_dir / "rules.yaml").read_text(encoding="utf-8")
+        engine, errors = RuleEngine.from_text(rules_text)
+        if not errors:
+            self.sort_flow.plan_service.set_engine(engine)
+
+    def _on_settings_changed(self) -> None:
+        """设置变更后更新内部状态。"""
+        self._settings = self._settings_manager.load()
 
     def _refresh_history(self) -> None:
         self.history_page.set_runs(self.sort_flow.history.list_runs())
