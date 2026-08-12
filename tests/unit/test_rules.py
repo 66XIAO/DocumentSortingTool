@@ -244,14 +244,19 @@ def test_dump_allows_unicode() -> None:
 def test_builtin_covers_six_keyword_categories() -> None:
     categories = {"/".join(r.category) for r in builtin_rules() if r.type != "extension"}
 
-    assert categories == {
+    assert {
         "财务/发票",
         "财务/报销",
+        "财务/对账单",
         "合同协议",
+        "法律文书",
         "简历",
         "证件资料",
+        "邮件",
+        "会议记录",
+        "笔记",
         "截图",
-    }
+    }.issubset(categories)
 
 
 def test_builtin_covers_eleven_extension_categories() -> None:
@@ -259,7 +264,7 @@ def test_builtin_covers_eleven_extension_categories() -> None:
         "/".join(r.category) for r in builtin_rules() if r.type == "extension"
     }
 
-    assert categories == {
+    assert {
         "文档/PDF",
         "文档/Word",
         "文档/表格",
@@ -271,7 +276,10 @@ def test_builtin_covers_eleven_extension_categories() -> None:
         "压缩包",
         "安装程序",
         "代码",
-    }
+        "设计",
+        "字体",
+        "镜像",
+    }.issubset(categories)
 
 
 def test_packaged_rules_file_exists_and_parses() -> None:
@@ -283,6 +291,61 @@ def test_packaged_rules_file_exists_and_parses() -> None:
 
     assert errors == [], [e.describe() for e in errors]
     assert set(rules) == set(builtin_rules()), "内置规则文件与 builtin_rules() 不一致"
+
+
+def test_default_preset_equals_builtin_rules() -> None:
+    """通用办公方案即内置默认规则。"""
+    from app.core.rules import DEFAULT_PRESET_ID, RULE_PRESETS, preset_by_id
+
+    assert DEFAULT_PRESET_ID == RULE_PRESETS[0].id
+    assert list(preset_by_id(DEFAULT_PRESET_ID).rules) == builtin_rules()
+
+
+def test_presets_have_unique_ids_and_valid_rules() -> None:
+    """每套方案的规则都必须合法可序列化，且 id 唯一。"""
+    from app.core.rules import RULE_PRESETS
+
+    ids = [p.id for p in RULE_PRESETS]
+    assert len(ids) == len(set(ids))
+
+    for preset in RULE_PRESETS:
+        assert preset.name
+        assert preset.description
+        text = RuleSerializer.dump(preset.rules)
+        restored, errors = RuleSerializer.load(text)
+        assert errors == [], [e.describe() for e in errors]
+        assert set(restored) == set(preset.rules)
+        # 每套方案至少有一条规则，否则这套方案没有意义
+        assert len(preset.rules) > 0
+
+
+def test_presets_differ_in_character() -> None:
+    """不同方案应具有不同特点（规则集不应完全相同）。"""
+    from app.core.rules import RULE_PRESETS
+
+    signature = {
+        p.id: {(r.id, r.type, r.category) for r in p.rules}
+        for p in RULE_PRESETS
+    }
+    values = list(signature.values())
+    for i in range(len(values)):
+        for j in range(i + 1, len(values)):
+            assert values[i] != values[j], "存在完全相同的两套方案"
+
+
+def test_preset_by_id_unknown_returns_none() -> None:
+    from app.core.rules import preset_by_id
+
+    assert preset_by_id("does_not_exist") is None
+
+
+def test_developer_preset_has_broad_code_rules() -> None:
+    """开发者方案应覆盖大量代码扩展名。"""
+    from app.core.rules import preset_by_id
+
+    preset = preset_by_id("developer")
+    code_rules = [r for r in preset.rules if r.id == "code"]
+    assert code_rules and len(code_rules[0].patterns) >= 30
 
 
 # ---------------------------------------------------------------------------

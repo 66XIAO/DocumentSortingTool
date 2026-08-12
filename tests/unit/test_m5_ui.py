@@ -68,6 +68,66 @@ def test_rules_page_saves_atomically_to_injected_manager_path(
     assert not manager.rules_path.with_suffix(".yaml.tmp").exists()
 
 
+def test_rules_page_switches_preset(qtbot, tmp_path: Path, monkeypatch) -> None:
+    """切换分类方案会把对应方案的规则载入编辑器。"""
+    from app.core.rules import RULE_PRESETS, RuleSerializer
+    from app.ui.pages import rules_page as module
+
+    manager = SettingsManager(base_dir=tmp_path)
+    page = module.RulesPage(manager)
+    qtbot.addWidget(page)
+
+    dev_idx = [i for i, p in enumerate(RULE_PRESETS) if p.id == "developer"][0]
+    page._preset.setCurrentIndex(dev_idx)  # noqa: SLF001
+
+    dev = next(p for p in RULE_PRESETS if p.id == "developer")
+    loaded, _ = RuleSerializer.load(page._editor.toPlainText())  # noqa: SLF001
+    assert set(loaded) == set(dev.rules)
+
+
+def test_rules_page_unsaved_change_blocks_preset_switch(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """有未保存修改时切换方案需确认；取消则回弹。"""
+    from app.core.rules import RULE_PRESETS
+    from app.ui.pages import rules_page as module
+
+    manager = SettingsManager(base_dir=tmp_path)
+    page = module.RulesPage(manager)
+    qtbot.addWidget(page)
+    monkeypatch.setattr(module, "confirm", lambda *_a, **_k: False)
+
+    before = page._editor.toPlainText()  # noqa: SLF001
+    page._editor.setPlainText(before + "\n# 未保存改动\n")  # noqa: SLF001
+
+    personal_idx = [i for i, p in enumerate(RULE_PRESETS) if p.id == "personal"][0]
+    page._preset.setCurrentIndex(personal_idx)  # noqa: SLF001
+
+    # 取消后：下拉回弹、编辑器内容不变
+    assert page.current_preset_id() != "personal"
+    assert page._editor.toPlainText() == before + "\n# 未保存改动\n"  # noqa: SLF001
+
+
+def test_rules_page_confirmed_preset_switch_overwrites(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """确认后切换方案会用新方案覆盖编辑器内容。"""
+    from app.core.rules import RULE_PRESETS
+    from app.ui.pages import rules_page as module
+
+    manager = SettingsManager(base_dir=tmp_path)
+    page = module.RulesPage(manager)
+    qtbot.addWidget(page)
+    monkeypatch.setattr(module, "confirm", lambda *_a, **_k: True)
+
+    page._editor.setPlainText(page._editor.toPlainText() + "\n# 改动\n")  # noqa: SLF001
+    personal_idx = [i for i, p in enumerate(RULE_PRESETS) if p.id == "personal"][0]
+    page._preset.setCurrentIndex(personal_idx)  # noqa: SLF001
+
+    assert page.current_preset_id() == "personal"
+    assert "# 改动" not in page._editor.toPlainText()  # noqa: SLF001
+
+
 def test_settings_save_updates_all_visible_groups_and_keyring(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:

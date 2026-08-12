@@ -623,7 +623,11 @@ class MainWindow(FluentWindow):
         apply_system_theme()
         self.setStyleSheet(app_stylesheet())
         self.setWindowTitle("DocSorter 文档分类工具")
-        self.resize(1180, 760)
+        # 默认高度低于常见 768px 屏幕减去任务栏后的可用空间，保证底部操作条
+        # （「开始整理」）始终落在可视区域内、可以被点到。
+        self.resize(1000, 600)
+        # 允许窗口进一步缩小到更矮的屏幕，避免底部操作条被挤出可视区
+        self.setMinimumSize(840, 480)
 
         engine, rule_errors = self._load_rules()
         self._plan_service = PlanService(engine=engine, guard=guard, parent=self)

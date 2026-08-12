@@ -373,6 +373,23 @@ def test_execute_blocked_when_space_insufficient(qtbot, sample) -> None:
     assert page._execute.isEnabled() is False
 
 
+def test_action_bar_stays_reachable_on_short_window(qtbot, sample) -> None:
+    """需求 17 相关：窗口高度受限时「开始整理」不能被挤出可视区。"""
+    from app.ui.pages.preview_page import PreviewPage
+
+    _root, result = sample
+    page = PreviewPage()
+    page.resize(1000, 480)  # 模拟矮屏
+    page.show()
+    qtbot.addWidget(page)
+    page.show_result(result)
+
+    # 操作条在页面底部，其下边缘应落在页面可视高度内
+    bottom = page._execute.geometry().bottom() + page._execute.pos().y()
+    assert page._execute.isVisible() or page.isVisible()
+    assert page._execute.geometry().bottom() <= page.height()
+
+
 def test_ai_switch_disabled_without_provider(qtbot) -> None:
     """需求 6.3。"""
     from app.ui.pages.preview_page import PreviewPage

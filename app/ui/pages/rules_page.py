@@ -18,18 +18,36 @@ from PySide6.QtWidgets import (
 )
 
 from app.config.settings import SettingsManager
-from app.core.rules import RuleSerializer, render_rules_yaml
+from app.core.rules import (
+    DEFAULT_PRESET_ID,
+    RULE_PRESETS,
+    RuleSerializer,
+    preset_by_id,
+    render_rules_yaml,
+)
 from app.ui.theme import (
     DANGER,
     SPACE_LG,
+    SPACE_MD,
+    BodyLabel,
     CaptionLabel,
+    ComboBox,
     PrimaryPushButton,
     PushButton,
     StrongBodyLabel,
     TitleLabel,
+    confirm,
     toast_error,
     toast_info,
 )
+
+
+def _preset_index(preset_id: str) -> int:
+    """方案 id -> 在 RULE_PRESETS 中的下标；找不到回落到默认方案。"""
+    for index, preset in enumerate(RULE_PRESETS):
+        if preset.id == preset_id:
+            return index
+    return 0
 
 
 class RulesPage(QWidget):
@@ -51,6 +69,8 @@ class RulesPage(QWidget):
             # 首次运行或规则文件不可读时才回落到内置规则。不能每次打开页面都从
             # 内置规则开始，否则用户点一次保存就会覆盖之前的自定义规则。
             self._original_text = render_rules_yaml()
+        # 编辑器当前内容对应的方案 id（用户自定义时可能不在 RULE_PRESETS 中）
+        self._loaded_preset_id = DEFAULT_PRESET_ID
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACE_LG, SPACE_LG, SPACE_LG, SPACE_LG)
@@ -74,6 +94,26 @@ class RulesPage(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
+        # —— 分类方案预设选择 ——
+        # qfluentwidgets 的 ComboBox.addItem 不保存 userData，这里用下标直接映射
+        # 到 RULE_PRESETS（RULE_PRESETS 是固定元组，下标即方案序）。
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(SPACE_MD)
+        preset_row.addWidget(StrongBodyLabel("分类方案", self))
+        self._preset = ComboBox(self)
+        for preset in RULE_PRESETS:
+            self._preset.addItem(preset.name)
+        self._preset.setCurrentIndex(_preset_index(DEFAULT_PRESET_ID))
+        self._preset.currentIndexChanged.connect(self._on_preset_changed)
+        preset_row.addWidget(self._preset)
+        preset_row.addStretch(1)
+        layout.addLayout(preset_row)
+
+        self._preset_desc = BodyLabel(self)
+        self._preset_desc.setWordWrap(True)
+        layout.addWidget(self._preset_desc)
+        self._update_preset_desc()
+
         self._status = CaptionLabel("", self)
         self._status.setStyleSheet(f"color: {DANGER};")
         layout.addWidget(self._status)
@@ -83,9 +123,51 @@ class RulesPage(QWidget):
         self._editor.setObjectName("rulesEditor")
         layout.addWidget(self._editor)
 
+    # -- 分类方案预设 -----------------------------------------------------
+
+    def current_preset_id(self) -> str:
+        """当前下拉选中的方案 id。"""
+        return RULE_PRESETS[self._preset.currentIndex()].id
+
+    def _update_preset_desc(self) -> None:
+        preset = preset_by_id(self.current_preset_id())
+        self._preset_desc.setText(preset.description if preset else "")
+
+    def _on_preset_changed(self, index: int) -> None:
+        """切换方案：若编辑器有未保存改动则先确认，确认后载入该方案规则。"""
+        if 0 <= index < len(RULE_PRESETS) and self._editor.toPlainText() != self._original_text:
+            ok = confirm(
+                self,
+                "切换分类方案",
+                "当前规则有未保存的修改，切换方案会丢失这些修改。继续吗？",
+                "继续切换",
+            )
+            if not ok:
+                # 取消：把下拉回弹到当前编辑器对应的方案
+                self._preset.blockSignals(True)
+                self._preset.setCurrentIndex(_preset_index(self._loaded_preset_id))
+                self._preset.blockSignals(False)
+                return
+        preset = preset_by_id(self.current_preset_id())
+        if preset is not None:
+            self._editor.setPlainText(RuleSerializer.dump(preset.rules))
+            self._original_text = self._editor.toPlainText()
+            self._loaded_preset_id = preset.id
+            self._status.setText("")
+        self._update_preset_desc()
+
     def _reset_default(self) -> None:
-        self._editor.setPlainText(render_rules_yaml())
+        preset = preset_by_id(DEFAULT_PRESET_ID)
+        self._editor.setPlainText(
+            RuleSerializer.dump(preset.rules) if preset else render_rules_yaml()
+        )
+        self._original_text = self._editor.toPlainText()
+        self._loaded_preset_id = DEFAULT_PRESET_ID
         self._status.setText("")
+        self._preset.blockSignals(True)
+        self._preset.setCurrentIndex(_preset_index(DEFAULT_PRESET_ID))
+        self._preset.blockSignals(False)
+        self._update_preset_desc()
 
     def _save(self) -> None:
         text = self._editor.toPlainText()

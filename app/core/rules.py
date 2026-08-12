@@ -301,76 +301,154 @@ def _normalize_ext(ext: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 内置默认规则
+# 内置默认规则与分类方案预设
 # ---------------------------------------------------------------------------
 
-#: 需求 4.6 的 6 组关键词类目
-_KEYWORD_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("fin_invoice", ("财务", "发票"), ("发票", "invoice", "税票")),
-    ("fin_expense", ("财务", "报销"), ("报销", "费用", "expense")),
-    ("legal_contract", ("合同协议",), ("合同", "协议", "contract", "agreement", "nda")),
-    ("hr_resume", ("简历",), ("简历", "resume", "cv")),
-    ("id_docs", ("证件资料",), ("身份证", "护照", "户口", "营业执照")),
+#: 规则构造辅助。keyword/regex 默认 priority 200，extension 默认 100（需求 3.9）。
+def _kw(rule_id: str, category: tuple[str, ...], patterns: Sequence[str]) -> Rule:
+    return Rule(rule_id, "keyword", PRIORITY_KEYWORD, tuple(patterns), category)
+
+
+def _re(rule_id: str, category: tuple[str, ...], patterns: Sequence[str]) -> Rule:
+    return Rule(rule_id, "regex", PRIORITY_KEYWORD, tuple(patterns), category)
+
+
+def _ext(rule_id: str, category: tuple[str, ...], patterns: Sequence[str]) -> Rule:
+    return Rule(rule_id, "extension", PRIORITY_EXTENSION, tuple(patterns), category)
+
+
+@dataclass(frozen=True)
+class RulePreset:
+    """一套可选的分类方案。
+
+    ``id`` 用于标识，``name`` 是规则管理页下拉框展示名，``description`` 说明
+    这套方案的适用特点，``rules`` 是该方案的完整规则集。
+    """
+
+    id: str
+    name: str
+    description: str
+    rules: tuple[Rule, ...]
+
+
+def _general_rules() -> tuple[Rule, ...]:
+    """通用办公（默认）：全面均衡，覆盖常见办公文档。"""
+    return (
+        # —— 关键词（财务/行政/人事/沟通）——
+        _kw("fin_invoice", ("财务", "发票"), ("发票", "invoice", "税票")),
+        _kw("fin_expense", ("财务", "报销"), ("报销", "费用", "expense")),
+        _kw("fin_statement", ("财务", "对账单"), ("对账单", "流水", "statement")),
+        _kw("legal_contract", ("合同协议",), ("合同", "协议", "contract", "agreement", "nda")),
+        _kw("legal_docs", ("法律文书",), ("法律", "判决", "律师函", "诉状")),
+        _kw("hr_resume", ("简历",), ("简历", "resume", "cv")),
+        _kw("id_docs", ("证件资料",), ("身份证", "护照", "户口", "营业执照")),
+        _kw("comm_email", ("邮件",), ("邮件", "email", "收件箱")),
+        _kw("comm_minutes", ("会议记录",), ("会议", "纪要", "minutes", "meeting")),
+        _kw("pers_note", ("笔记",), ("笔记", "备忘", "note")),
+        _re("shot_screenshot", ("截图",), (r"^(screenshot|屏幕截图|截图|image_?\d+)",)),
+        # —— 扩展名（文档/媒体/程序/设计）——
+        _ext("doc_pdf", ("文档", "PDF"), (".pdf",)),
+        _ext("doc_word", ("文档", "Word"), (".doc", ".docx", ".rtf", ".odt")),
+        _ext("doc_sheet", ("文档", "表格"), (".xls", ".xlsx", ".csv", ".ods")),
+        _ext("doc_slide", ("文档", "演示"), (".ppt", ".pptx", ".odp", ".key")),
+        _ext("doc_text", ("文档", "文本"), (".txt", ".md", ".log")),
+        _ext("ebook", ("电子书",), (".epub", ".mobi", ".azw3", ".djvu")),
+        _ext("image", ("图片",), (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".svg", ".psd")),
+        _ext("media", ("音视频",), (".mp3", ".wav", ".flac", ".mp4", ".mkv", ".avi", ".mov")),
+        _ext("archive", ("压缩包",), (".zip", ".rar", ".7z", ".tar", ".gz")),
+        _ext("installer", ("安装程序",), (".exe", ".msi", ".apk")),
+        _ext("code", ("代码",), (".py", ".js", ".ts", ".java", ".c", ".cpp", ".go", ".rs", ".html", ".css", ".json", ".xml", ".yaml", ".sql")),
+        _ext("design", ("设计",), (".dwg", ".dxf", ".ai", ".fig", ".sketch", ".xd")),
+        _ext("font", ("字体",), (".ttf", ".otf", ".woff", ".woff2")),
+        _ext("iso", ("镜像",), (".iso", ".img", ".dmg")),
+    )
+
+
+def _personal_rules() -> tuple[Rule, ...]:
+    """个人生活：重影像、音乐、照片与个人文档。"""
+    return (
+        _kw("pers_photo", ("照片",), ("照片", "相册", "合影", "自拍")),
+        _kw("pers_note", ("笔记",), ("笔记", "备忘", "note", "随手记")),
+        _kw("pers_trip", ("旅行",), ("旅行", "行程", "机票", "酒店")),
+        _kw("id_docs", ("证件资料",), ("身份证", "护照", "户口")),
+        _kw("hr_resume", ("简历",), ("简历", "resume", "cv")),
+        _kw("fin_invoice", ("财务", "发票"), ("发票", "税票")),
+        _re("shot_screenshot", ("截图",), (r"^(screenshot|屏幕截图|截图|image_?\d+)",)),
+        _ext("image", ("图片",), (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tiff", ".raw", ".dng")),
+        _ext("media", ("音视频",), (".mp3", ".wav", ".flac", ".m4a", ".aac", ".mp4", ".mkv", ".avi", ".mov", ".wmv")),
+        _ext("ebook", ("电子书",), (".epub", ".mobi", ".azw3", ".pdf", ".djvu")),
+        _ext("doc_word", ("文档", "Word"), (".doc", ".docx")),
+        _ext("doc_sheet", ("文档", "表格"), (".xls", ".xlsx")),
+        _ext("archive", ("压缩包",), (".zip", ".rar", ".7z")),
+        _ext("installer", ("安装程序",), (".exe", ".msi")),
+    )
+
+
+def _developer_rules() -> tuple[Rule, ...]:
+    """开发者：重代码、配置、日志与技术文档。"""
+    return (
+        _kw("dev_code", ("代码",), ("源码", "代码", "code", "src")),
+        _kw("dev_req", ("需求文档",), ("需求", "规格", "prd", "spec")),
+        _kw("dev_design", ("设计文档",), ("设计文档", "架构", "design", "hlld")),
+        _kw("comm_minutes", ("会议记录",), ("会议", "纪要", "minutes", "meeting")),
+        _ext("code", ("代码",), (".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".cs", ".sh", ".bat", ".ps1", ".html", ".css", ".scss", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sql", ".md")),
+        _ext("doc_text", ("文档", "文本"), (".txt", ".md", ".rst")),
+        _ext("doc_pdf", ("文档", "PDF"), (".pdf",)),
+        _ext("doc_word", ("文档", "Word"), (".doc", ".docx")),
+        _ext("log", ("日志",), (".log", ".out")),
+        _ext("db", ("数据库",), (".db", ".sqlite", ".sqlite3")),
+        _ext("archive", ("压缩包",), (".zip", ".tar", ".gz", ".tgz", ".7z")),
+        _ext("installer", ("安装程序",), (".exe", ".msi", ".dmg", ".deb", ".rpm")),
+        _ext("iso", ("镜像",), (".iso", ".img")),
+    )
+
+
+def _business_rules() -> tuple[Rule, ...]:
+    """财务商务：重财务单据、合同、报价与报表。"""
+    return (
+        _kw("fin_invoice", ("财务", "发票"), ("发票", "invoice", "税票")),
+        _kw("fin_expense", ("财务", "报销"), ("报销", "费用", "expense")),
+        _kw("fin_statement", ("财务", "对账单"), ("对账单", "流水", "statement")),
+        _kw("fin_tax", ("财务", "税务"), ("税务", "报税", "tax")),
+        _kw("legal_contract", ("合同协议",), ("合同", "协议", "contract", "agreement")),
+        _kw("biz_quote", ("报价单",), ("报价", "报价单", "quote")),
+        _kw("biz_order", ("订单",), ("订单", "采购", "order", "po")),
+        _kw("biz_receipt", ("收据",), ("收据", "回执", "receipt")),
+        _ext("doc_pdf", ("文档", "PDF"), (".pdf",)),
+        _ext("doc_sheet", ("文档", "表格"), (".xls", ".xlsx", ".csv")),
+        _ext("doc_word", ("文档", "Word"), (".doc", ".docx")),
+        _ext("doc_slide", ("文档", "演示"), (".ppt", ".pptx")),
+        _ext("image", ("图片",), (".jpg", ".png", ".jpeg", ".tiff")),
+        _ext("archive", ("压缩包",), (".zip", ".rar")),
+    )
+
+
+#: 全部分类方案预设。第一项是默认（通用办公）。
+RULE_PRESETS: tuple[RulePreset, ...] = (
+    RulePreset("general", "通用办公", "全面均衡，覆盖常见办公、财务与文档类型", _general_rules()),
+    RulePreset("personal", "个人生活", "重照片、音视频与个人文档，适合整理个人资料", _personal_rules()),
+    RulePreset("developer", "开发者", "重代码、配置、日志与技术文档，适合程序员目录", _developer_rules()),
+    RulePreset("business", "财务商务", "重财务单据、合同、报价与报表", _business_rules()),
 )
 
-#: 需求 4.6 的截图规则（正则）
-_REGEX_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    (
-        "shot_screenshot",
-        ("截图",),
-        (r"^(screenshot|屏幕截图|截图|image_?\d+)",),
-    ),
-)
+DEFAULT_PRESET_ID = RULE_PRESETS[0].id
 
-#: 需求 4.7 的 11 组扩展名类目
-_EXTENSION_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("doc_pdf", ("文档", "PDF"), (".pdf",)),
-    ("doc_word", ("文档", "Word"), (".doc", ".docx", ".rtf", ".odt")),
-    ("doc_sheet", ("文档", "表格"), (".xls", ".xlsx", ".csv", ".ods")),
-    ("doc_slide", ("文档", "演示"), (".ppt", ".pptx", ".odp", ".key")),
-    ("doc_text", ("文档", "文本"), (".txt", ".md", ".log")),
-    ("ebook", ("电子书",), (".epub", ".mobi", ".azw3", ".djvu")),
-    (
-        "image",
-        ("图片",),
-        (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".svg", ".psd"),
-    ),
-    (
-        "media",
-        ("音视频",),
-        (".mp3", ".wav", ".flac", ".mp4", ".mkv", ".avi", ".mov"),
-    ),
-    ("archive", ("压缩包",), (".zip", ".rar", ".7z", ".tar", ".gz")),
-    ("installer", ("安装程序",), (".exe", ".msi", ".apk")),
-    (
-        "code",
-        ("代码",),
-        (
-            ".py", ".js", ".ts", ".java", ".c", ".cpp", ".go", ".rs",
-            ".html", ".css", ".json", ".xml", ".yaml", ".sql",
-        ),
-    ),
-)
+
+def preset_by_id(preset_id: str) -> RulePreset | None:
+    """按 id 查方案，找不到返回 None。"""
+    for preset in RULE_PRESETS:
+        if preset.id == preset_id:
+            return preset
+    return None
 
 
 def builtin_rules() -> list[Rule]:
-    """内置默认规则。需求 4.6、4.7。
+    """内置默认规则（通用办公方案）。需求 4.6、4.7。
 
     规则文件缺失或解析失败时用它兜底（需求 4.3），因此它必须是可用的完整规则集，
     而不是空集。
     """
-    rules: list[Rule] = []
-    for rule_id, category, patterns in _KEYWORD_RULES:
-        rules.append(
-            Rule(rule_id, "keyword", PRIORITY_KEYWORD, patterns, category)
-        )
-    for rule_id, category, patterns in _REGEX_RULES:
-        rules.append(Rule(rule_id, "regex", PRIORITY_KEYWORD, patterns, category))
-    for rule_id, category, patterns in _EXTENSION_RULES:
-        rules.append(
-            Rule(rule_id, "extension", PRIORITY_EXTENSION, patterns, category)
-        )
-    return rules
+    return list(RULE_PRESETS[0].rules)
 
 
 # ---------------------------------------------------------------------------

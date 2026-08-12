@@ -195,6 +195,9 @@ class PreviewPage(QWidget):
 
     def _build_body(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        # 允许三个面板在窗口变矮时收缩，避免把底部操作条挤出可视区
+        splitter.setChildrenCollapsible(True)
+        splitter.setMinimumHeight(120)
 
         self.category_list = CategoryList(splitter)
         self.category_list.renameRequested.connect(self.renameCategory)

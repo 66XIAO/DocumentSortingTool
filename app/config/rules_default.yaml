@@ -1,157 +1,259 @@
-# DocSorter 内置分类规则
-#
-# 首次运行时本文件被释放到 %APPDATA%\DocSorter\rules.yaml，之后你改那一份即可，
-# 本文件不再被读取。
-#
-# 字段说明
-#   id        规则标识，必须唯一
-#   type      keyword（文件名含关键词）/ regex（文件名匹配正则）/ extension（按扩展名）
-#   priority  数值越大越先求值。关键词类 200 > 扩展名类 100（需求 3.9）
-#   category  类目路径，用 / 分隔层级，例如 财务/发票
-#   patterns  匹配项列表。extension 类型写成 .pdf 这样含点的形式
-#   enabled   置为 false 可临时停用某条规则而不必删掉它
-#
-# 匹配一律忽略大小写。同一优先级内按本文件中出现的先后顺序取第一个命中，
-# 所以想让某条规则更早生效，把它往上挪或者调高 priority。
-#
-# 改坏了不要紧：解析失败会回落到内置默认规则，并在设置页显示出错的行号与字段。
-
 version: 1
 rules:
-
-  # ======== 关键词规则（priority 200，先于扩展名求值）========
-
-  - id: fin_invoice
-    type: keyword
-    priority: 200
-    category: 财务/发票
-    patterns: [发票, invoice, 税票]
-    enabled: true
-
-  - id: fin_expense
-    type: keyword
-    priority: 200
-    category: 财务/报销
-    patterns: [报销, 费用, expense]
-    enabled: true
-
-  - id: legal_contract
-    type: keyword
-    priority: 200
-    category: 合同协议
-    patterns: [合同, 协议, contract, agreement, nda]
-    enabled: true
-
-  - id: hr_resume
-    type: keyword
-    priority: 200
-    category: 简历
-    patterns: [简历, resume, cv]
-    enabled: true
-
-  - id: id_docs
-    type: keyword
-    priority: 200
-    category: 证件资料
-    patterns: [身份证, 护照, 户口, 营业执照]
-    enabled: true
-
-  - id: shot_screenshot
-    type: regex
-    priority: 200
-    category: 截图
-    patterns: ['^(screenshot|屏幕截图|截图|image_?\d+)']
-    enabled: true
-
-  # ======== 扩展名规则（priority 100，兜底）========
-
-  - id: doc_pdf
-    type: extension
-    priority: 100
-    category: 文档/PDF
-    patterns: ['.pdf']
-    enabled: true
-
-  - id: doc_word
-    type: extension
-    priority: 100
-    category: 文档/Word
-    patterns: ['.doc', '.docx', '.rtf', '.odt']
-    enabled: true
-
-  - id: doc_sheet
-    type: extension
-    priority: 100
-    category: 文档/表格
-    patterns: ['.xls', '.xlsx', '.csv', '.ods']
-    enabled: true
-
-  - id: doc_slide
-    type: extension
-    priority: 100
-    category: 文档/演示
-    patterns: ['.ppt', '.pptx', '.odp', '.key']
-    enabled: true
-
-  - id: doc_text
-    type: extension
-    priority: 100
-    category: 文档/文本
-    patterns: ['.txt', '.md', '.log']
-    enabled: true
-
-  - id: ebook
-    type: extension
-    priority: 100
-    category: 电子书
-    patterns: ['.epub', '.mobi', '.azw3', '.djvu']
-    enabled: true
-
-  - id: image
-    type: extension
-    priority: 100
-    category: 图片
-    patterns: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.svg', '.psd']
-    enabled: true
-
-  - id: media
-    type: extension
-    priority: 100
-    category: 音视频
-    patterns: ['.mp3', '.wav', '.flac', '.mp4', '.mkv', '.avi', '.mov']
-    enabled: true
-
-  - id: archive
-    type: extension
-    priority: 100
-    category: 压缩包
-    patterns: ['.zip', '.rar', '.7z', '.tar', '.gz']
-    enabled: true
-
-  - id: installer
-    type: extension
-    priority: 100
-    category: 安装程序
-    patterns: ['.exe', '.msi', '.apk']
-    enabled: true
-
-  - id: code
-    type: extension
-    priority: 100
-    category: 代码
-    patterns:
-      - '.py'
-      - '.js'
-      - '.ts'
-      - '.java'
-      - '.c'
-      - '.cpp'
-      - '.go'
-      - '.rs'
-      - '.html'
-      - '.css'
-      - '.json'
-      - '.xml'
-      - '.yaml'
-      - '.sql'
-    enabled: true
+- id: comm_email
+  type: keyword
+  priority: 200
+  category: 邮件
+  patterns:
+  - 邮件
+  - email
+  - 收件箱
+  enabled: true
+- id: comm_minutes
+  type: keyword
+  priority: 200
+  category: 会议记录
+  patterns:
+  - 会议
+  - 纪要
+  - minutes
+  - meeting
+  enabled: true
+- id: fin_expense
+  type: keyword
+  priority: 200
+  category: 财务/报销
+  patterns:
+  - 报销
+  - 费用
+  - expense
+  enabled: true
+- id: fin_invoice
+  type: keyword
+  priority: 200
+  category: 财务/发票
+  patterns:
+  - 发票
+  - invoice
+  - 税票
+  enabled: true
+- id: fin_statement
+  type: keyword
+  priority: 200
+  category: 财务/对账单
+  patterns:
+  - 对账单
+  - 流水
+  - statement
+  enabled: true
+- id: hr_resume
+  type: keyword
+  priority: 200
+  category: 简历
+  patterns:
+  - 简历
+  - resume
+  - cv
+  enabled: true
+- id: id_docs
+  type: keyword
+  priority: 200
+  category: 证件资料
+  patterns:
+  - 身份证
+  - 护照
+  - 户口
+  - 营业执照
+  enabled: true
+- id: legal_contract
+  type: keyword
+  priority: 200
+  category: 合同协议
+  patterns:
+  - 合同
+  - 协议
+  - contract
+  - agreement
+  - nda
+  enabled: true
+- id: legal_docs
+  type: keyword
+  priority: 200
+  category: 法律文书
+  patterns:
+  - 法律
+  - 判决
+  - 律师函
+  - 诉状
+  enabled: true
+- id: pers_note
+  type: keyword
+  priority: 200
+  category: 笔记
+  patterns:
+  - 笔记
+  - 备忘
+  - note
+  enabled: true
+- id: shot_screenshot
+  type: regex
+  priority: 200
+  category: 截图
+  patterns:
+  - ^(screenshot|屏幕截图|截图|image_?\d+)
+  enabled: true
+- id: archive
+  type: extension
+  priority: 100
+  category: 压缩包
+  patterns:
+  - .zip
+  - .rar
+  - .7z
+  - .tar
+  - .gz
+  enabled: true
+- id: code
+  type: extension
+  priority: 100
+  category: 代码
+  patterns:
+  - .py
+  - .js
+  - .ts
+  - .java
+  - .c
+  - .cpp
+  - .go
+  - .rs
+  - .html
+  - .css
+  - .json
+  - .xml
+  - .yaml
+  - .sql
+  enabled: true
+- id: design
+  type: extension
+  priority: 100
+  category: 设计
+  patterns:
+  - .dwg
+  - .dxf
+  - .ai
+  - .fig
+  - .sketch
+  - .xd
+  enabled: true
+- id: doc_pdf
+  type: extension
+  priority: 100
+  category: 文档/PDF
+  patterns:
+  - .pdf
+  enabled: true
+- id: doc_sheet
+  type: extension
+  priority: 100
+  category: 文档/表格
+  patterns:
+  - .xls
+  - .xlsx
+  - .csv
+  - .ods
+  enabled: true
+- id: doc_slide
+  type: extension
+  priority: 100
+  category: 文档/演示
+  patterns:
+  - .ppt
+  - .pptx
+  - .odp
+  - .key
+  enabled: true
+- id: doc_text
+  type: extension
+  priority: 100
+  category: 文档/文本
+  patterns:
+  - .txt
+  - .md
+  - .log
+  enabled: true
+- id: doc_word
+  type: extension
+  priority: 100
+  category: 文档/Word
+  patterns:
+  - .doc
+  - .docx
+  - .rtf
+  - .odt
+  enabled: true
+- id: ebook
+  type: extension
+  priority: 100
+  category: 电子书
+  patterns:
+  - .epub
+  - .mobi
+  - .azw3
+  - .djvu
+  enabled: true
+- id: font
+  type: extension
+  priority: 100
+  category: 字体
+  patterns:
+  - .ttf
+  - .otf
+  - .woff
+  - .woff2
+  enabled: true
+- id: image
+  type: extension
+  priority: 100
+  category: 图片
+  patterns:
+  - .jpg
+  - .jpeg
+  - .png
+  - .gif
+  - .bmp
+  - .webp
+  - .heic
+  - .svg
+  - .psd
+  enabled: true
+- id: installer
+  type: extension
+  priority: 100
+  category: 安装程序
+  patterns:
+  - .exe
+  - .msi
+  - .apk
+  enabled: true
+- id: iso
+  type: extension
+  priority: 100
+  category: 镜像
+  patterns:
+  - .iso
+  - .img
+  - .dmg
+  enabled: true
+- id: media
+  type: extension
+  priority: 100
+  category: 音视频
+  patterns:
+  - .mp3
+  - .wav
+  - .flac
+  - .mp4
+  - .mkv
+  - .avi
+  - .mov
+  enabled: true
