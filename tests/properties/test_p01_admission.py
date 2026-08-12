@@ -75,9 +75,16 @@ def test_drive_root_is_rejected_as_drive_root(raw: str) -> None:
 
     result = guard.check_root(path)
 
-    # 不存在的盘会先被 NOT_EXISTS 拦下，那也是合法判定；存在时必须是 drive_root
+    # UNC 根可能要求凭据；Path.exists() 在 Windows 上不保证只返回 False，也可能抛
+    # WinError 1326。准入函数必须自行容错，属性测试不应在独立的 exists() 上先崩。
+    try:
+        exists = path.exists()
+    except OSError:
+        exists = False
+
+    # 不存在/不可访问的盘会先被 NOT_EXISTS 拦下，那也是合法判定；存在时必须是根目录
     assert result.reason in (RejectReason.DRIVE_ROOT, RejectReason.NOT_EXISTS)
-    if path.exists():
+    if exists:
         assert result.reason is RejectReason.DRIVE_ROOT
 
 

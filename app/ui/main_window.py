@@ -647,7 +647,7 @@ class MainWindow(FluentWindow):
         self._refresh_history()
         self._apply_retention()
         self._check_unfinished()
-        self.rules_page = RulesPage(self)
+        self.rules_page = RulesPage(self._settings_manager, self)
         self.rules_page.rulesSaved.connect(self._on_rules_saved)
         self.settings_page = SettingsPage(self._settings, self._settings_manager, self)
         self.settings_page.settingsChanged.connect(self._on_settings_changed)

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QRadioButton,
     QSplitter,
+    QStackedWidget,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -55,6 +56,7 @@ from app.ui.widgets.category_list import CategoryList
 from app.ui.widgets.detail_panel import DetailPanel
 from app.ui.widgets.plan_filter import PlanFilterProxy
 from app.ui.widgets.plan_tree_model import Column, PlanTreeModel, ViewMode
+from app.ui.widgets.states import EmptyState, ErrorState
 
 _POLICY_LABELS: tuple[tuple[str, ConflictPolicy], ...] = (
     ("同名时自动改名", ConflictPolicy.AUTO_RENAME),
@@ -121,7 +123,24 @@ class PreviewPage(QWidget):
         outer.addWidget(self._subtitle)
 
         outer.addLayout(self._build_stats())
-        outer.addWidget(self._build_body(), stretch=1)
+
+        # 用 QStackedWidget 在「方案内容」与「空态/错误态」之间互斥切换
+        self._stack = QStackedWidget(self)
+        self._stack.addWidget(self._build_body())  # index 0: 主内容
+
+        self._empty = EmptyState(
+            "还没有分类方案",
+            "返回上一步确认目录和扫描范围，然后点击「生成分类方案」。",
+            parent=self,
+        )
+        self._stack.addWidget(self._empty)  # index 1: 空态
+
+        self._error = ErrorState(
+            "方案生成失败", "", "重试", None, self
+        )
+        self._stack.addWidget(self._error)  # index 2: 错误态
+
+        outer.addWidget(self._stack, stretch=1)
         outer.addLayout(self._build_action_bar())
 
     # -- 顶部统计卡 -------------------------------------------------------
@@ -323,6 +342,7 @@ class PreviewPage(QWidget):
         self.category_list.set_plan(plan)
         self.detail.clear()
         self.tree.expandToDepth(0)
+        self._stack.setCurrentIndex(0)  # 显示主内容
 
         self.show_override_report(result.overrides)
 
@@ -334,6 +354,19 @@ class PreviewPage(QWidget):
             self._space_warning.setVisible(True)
             # 需求 9.10：空间不足整体阻止执行
             self._execute.setEnabled(False)
+
+    def show_empty(self, title: str = "", hint: str = "") -> None:
+        """显示空态。需求 17.9。"""
+        if title:
+            self._empty.set_text(title, hint)
+        self._stack.setCurrentIndex(1)
+        self._execute.setEnabled(False)
+
+    def show_error(self, detail: str) -> None:
+        """显示错误态。需求 17.11。"""
+        self._error.set_error("方案生成失败", detail)
+        self._stack.setCurrentIndex(2)
+        self._execute.setEnabled(False)
 
     def show_override_report(self, report: ApplyReport) -> None:
         """需求 19.7、19.8。"""

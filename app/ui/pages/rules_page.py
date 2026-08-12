@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -15,7 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.rules import Rule, RuleError, RuleSerializer, builtin_rules, render_rules_yaml
+from app.config.settings import SettingsManager
+from app.core.rules import RuleSerializer, render_rules_yaml
 from app.ui.theme import (
     DANGER,
     SPACE_LG,
@@ -34,10 +37,20 @@ class RulesPage(QWidget):
 
     rulesSaved = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        manager: SettingsManager,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("rulesPage")
-        self._original_text = render_rules_yaml()
+        self._manager = manager
+        try:
+            self._original_text = manager.rules_path.read_text(encoding="utf-8")
+        except OSError:
+            # 首次运行或规则文件不可读时才回落到内置规则。不能每次打开页面都从
+            # 内置规则开始，否则用户点一次保存就会覆盖之前的自定义规则。
+            self._original_text = render_rules_yaml()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACE_LG, SPACE_LG, SPACE_LG, SPACE_LG)
@@ -81,17 +94,26 @@ class RulesPage(QWidget):
             # 需求 4.3：解析错误时展示含行号与字段名的结构化错误提示
             messages = [e.describe() for e in errors]
             self._status.setText("\n".join(messages))
-            toast_error(f"规则文件有 {len(errors)} 处错误，请修正后保存")
+            toast_error(
+                self,
+                "规则无法保存",
+                f"规则文件有 {len(errors)} 处错误，请修正后保存。",
+            )
             return
 
-        # 写入文件
-        from app.config.settings import default_app_dir
-        import os
-        rules_path = default_app_dir() / "rules.yaml"
+        # 原子替换：写到一半崩溃时保留上一份可用规则，不留下半截 YAML。
+        rules_path = self._manager.rules_path
         os.makedirs(rules_path.parent, exist_ok=True)
-        rules_path.write_text(text, encoding="utf-8")
+        tmp = rules_path.with_suffix(".yaml.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, rules_path)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            toast_error(self, "规则保存失败", str(exc))
+            return
 
         self._original_text = text
         self._status.setText("")
-        toast_info(f"已保存 {len(rules)} 条规则")
+        toast_info(self, "规则已保存", f"已保存 {len(rules)} 条规则。")
         self.rulesSaved.emit()
