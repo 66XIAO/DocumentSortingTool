@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
 import yaml
+from yaml.constructor import SafeConstructor
 
 RULES_VERSION = 1
 
@@ -79,8 +80,23 @@ def _line_of(node: Any) -> int | None:
 
 
 def _scalar(node: Any) -> Any:
-    """把 compose 出来的标量节点转成 Python 值。"""
-    return yaml.safe_load(yaml.serialize(node)) if node is not None else None
+    """把 compose 出来的节点转成 Python 值。
+
+    不能用 ``yaml.safe_load(yaml.serialize(node))``：空值节点（用户写下
+    ``patterns:`` 却没填内容，或文件被截断在字段名之后）的 tag 是 null、value 是
+    空串，序列化后只剩文档结束标记 ``...``，再次解析必然抛 ParserError，违反需求
+    4.3「解析失败返回结构化错误而不抛未捕获异常」。改为直接走 PyYAML 自己的
+    constructor，语义与 ``safe_load`` 一致但不经过文本往返。
+
+    无法构造的节点（未知 tag、不可哈希的映射键）返回 None，由各字段的类型校验
+    产出结构化错误。
+    """
+    if node is None:
+        return None
+    try:
+        return SafeConstructor().construct_object(node, deep=True)
+    except yaml.YAMLError:
+        return None
 
 
 class RuleSerializer:
