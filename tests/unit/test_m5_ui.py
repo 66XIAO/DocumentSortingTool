@@ -189,7 +189,13 @@ def test_settings_privacy_upgrade_requires_explicit_confirmation(
 
 
 def test_connectivity_uses_configured_ollama_host(qtbot, tmp_path: Path, monkeypatch) -> None:
-    from app.core.llm import provider as provider_module
+    """需求 7.1、7.4：Ollama 用界面上填的 host，而不是别处推导出来的地址。
+
+    patch 的是 ``runner.make_provider``：``ConnectivityService`` 经
+    ``make_provider_for`` 调用它，而那个名字在 runner 的命名空间里已经绑定好了，
+    patch ``provider.make_provider`` 不会生效。
+    """
+    from app.core.llm import runner as runner_module
     from app.ui.pages import settings_page as module
 
     captured: dict[str, str] = {}
@@ -204,7 +210,7 @@ def test_connectivity_uses_configured_ollama_host(qtbot, tmp_path: Path, monkeyp
         captured.update({key: str(value) for key, value in kwargs.items()})
         return FakeProvider()
 
-    monkeypatch.setattr(provider_module, "make_provider", fake_make)
+    monkeypatch.setattr(runner_module, "make_provider", fake_make)
     monkeypatch.setattr(module, "toast_info", lambda *_args: None)
     manager = SettingsManager(base_dir=tmp_path, keyring_backend=MemoryKeyring())
     settings = Settings()
@@ -214,7 +220,10 @@ def test_connectivity_uses_configured_ollama_host(qtbot, tmp_path: Path, monkeyp
     page._host.setText("http://127.0.0.1:11434")  # noqa: SLF001
     page._model.setText("qwen-test")  # noqa: SLF001
 
-    page._test_connectivity()  # noqa: SLF001
+    # 调用现在是异步的：跑在工作线程里，必须等 finished
+    with qtbot.waitSignal(page._connectivity.finished, timeout=15000):  # noqa: SLF001
+        page._test_connectivity()  # noqa: SLF001
+    page._connectivity.wait(15000)  # noqa: SLF001
 
     assert captured["kind"] == ProviderKind.OLLAMA.value
     assert captured["host"] == "http://127.0.0.1:11434"

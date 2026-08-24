@@ -22,10 +22,15 @@ from PySide6.QtWidgets import (
 from app.config.settings import Settings, SettingsManager
 from app.core.models import (
     ActionKind,
+    AIOptions,
     ConflictPolicy,
     PrivacyLevel,
     ProviderKind,
     Strategy,
+)
+from app.services.connectivity_service import (
+    ConnectivityResult,
+    ConnectivityService,
 )
 from app.ui.theme import (
     SPACE_LG,
@@ -220,6 +225,12 @@ class SettingsPage(QWidget):
         ai.form.addRow("", self._test_conn_btn)
         layout.addWidget(ai)
 
+        # 连通性测试跑在工作线程里，见 ConnectivityService 的说明
+        self._connectivity = ConnectivityService(parent=self)
+        self._connectivity.busyChanged.connect(self._on_connectivity_busy)
+        self._connectivity.finished.connect(self._on_connectivity_done)
+        self._connectivity.failed.connect(self._on_connectivity_failed)
+
         # --- 历史保留 ---
         history = _Section("历史保留", self)
         self._max_runs = QSpinBox(self)
@@ -239,31 +250,67 @@ class SettingsPage(QWidget):
         if index >= 0:
             combo.setCurrentIndex(index)
 
+    @property
+    def connectivity_service(self) -> ConnectivityService:
+        """供主窗口关窗时收尾：网络等待可能还没结束。"""
+        return self._connectivity
+
+    def current_ai_options(self) -> AIOptions:
+        """按界面上**当前填着**的值构造 AIOptions。
+
+        不读 ``self._settings``：测试连通性的意义就是在保存之前先试一下，读已保存的
+        配置会让用户测的是旧参数。api_key 不进这个对象（需求 7.3），单独传。
+        """
+        return AIOptions(
+            enabled=self._ai_enabled.isChecked(),
+            provider=ProviderKind(str(self._provider_combo.currentData())),
+            base_url=self._base_url.text().strip(),
+            host=self._host.text().strip(),
+            model=self._model.text().strip(),
+            timeout_seconds=self._timeout.value(),
+            privacy_level=PrivacyLevel(str(self._privacy_combo.currentData())),
+            batch_size=self._batch_size.value(),
+        )
+
+    def current_api_key(self) -> str:
+        """优先用刚输入的，其次用 keyring 里已存的。"""
+        kind = str(self._provider_combo.currentData())
+        return self._api_key.text() or self._manager.get_api_key(kind) or ""
+
     def _test_connectivity(self) -> None:
         """发起一次最小请求确认服务可达。需求 7.4。
 
-        当前调用仍是同步的；它有 10 秒硬超时，后续应移入 WorkerService 以避免网络
-        故障时短暂冻结设置页。先保证参数和凭据来源正确，不再用配置目录 URI 当 host。
+        调用走 ``ConnectivityService``，在工作线程里跑。同步调用那 10 秒硬超时会
+        整整冻住窗口，用户看不到进展也没法取消，只会以为程序崩了。
         """
-        from app.core.llm.provider import make_provider
-
         kind = str(self._provider_combo.currentData())
-        api_key = self._api_key.text() or self._manager.get_api_key(kind) or ""
-        if kind == ProviderKind.OPENAI_COMPAT.value and not api_key:
+        if kind == ProviderKind.OPENAI_COMPAT.value and not self.current_api_key():
             toast_error(self, "无法测试连接", "请先输入 API Key。")
             return
-        try:
-            provider = make_provider(
-                kind,
-                base_url=self._base_url.text().strip(),
-                api_key=api_key,
-                host=self._host.text().strip(),
-                model=self._model.text().strip(),
-            )
-            result = provider.test_connectivity(timeout_seconds=10.0)
-            toast_info(self, "连接成功", result)
-        except Exception as exc:  # ProviderError + 配置错误都要给用户看见
-            toast_error(self, "连接失败", str(exc))
+        if not self._model.text().strip():
+            toast_error(self, "无法测试连接", "请先填写模型名称。")
+            return
+
+        if not self._connectivity.start_test(
+            self.current_ai_options(), self.current_api_key()
+        ):
+            toast_info(self, "正在测试", "上一次连通性测试还没结束，请稍候。")
+
+    def _on_connectivity_busy(self, busy: bool) -> None:
+        self._test_conn_btn.setEnabled(not busy)
+        self._test_conn_btn.setText("测试中…" if busy else "测试连通性")
+
+    def _on_connectivity_done(self, payload: object) -> None:
+        if not isinstance(payload, ConnectivityResult):
+            return
+        if payload.ok:
+            toast_info(self, "连接成功", payload.message)
+        else:
+            toast_error(self, "连接失败", payload.message)
+
+    def _on_connectivity_failed(self, detail: str) -> None:
+        """作业本身崩了才走到这里；连不上服务走的是 finished。"""
+        toast_error(self, "连接失败", detail)
 
     def _save(self) -> None:
         new_privacy = PrivacyLevel(str(self._privacy_combo.currentData()))

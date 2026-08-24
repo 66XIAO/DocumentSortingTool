@@ -952,6 +952,8 @@ class MainWindow(FluentWindow):
             self._plan_service,
             self.sort_flow.execute_service,
             self.sort_flow.undo_service,
+            # 连通性测试也可能正卡在网络等待上，不收尾会让进程退不干净
+            self.settings_page.connectivity_service,
         ):
             service.cancel()
             service.wait(3000)
