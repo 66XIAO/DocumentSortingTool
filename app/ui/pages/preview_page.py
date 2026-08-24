@@ -267,7 +267,13 @@ class PreviewPage(QWidget):
         self.tree.setDropIndicatorShown(True)
         header = self.tree.header()
         header.setSectionResizeMode(Column.NAME, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(Column.ACTION, QHeaderView.ResizeMode.ResizeToContents)
+        # 动作列刻意用 Interactive + 固定初始宽度，**不用 ResizeToContents**：
+        # 后者要遍历该列的每一行去量文本宽度，而且每次插入行都要重算。需求 10.14
+        # 要求 10 万条目下滚动与展开保持 100ms 内响应，逐行量宽在这个规模上直接
+        # 违反该约束。动作列的内容是「移动 · 目标已存在 · 未勾选」这类短固定文案，
+        # 给个足够的固定宽度就够，不值得为它付 O(行数) 的代价。
+        header.setSectionResizeMode(Column.ACTION, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(Column.ACTION, 200)
         header.setSectionResizeMode(Column.REASON, QHeaderView.ResizeMode.Stretch)
         self.tree.selectionModel().currentChanged.connect(self._on_current_changed)
         self.model.dataChanged.connect(self._on_model_data_changed)

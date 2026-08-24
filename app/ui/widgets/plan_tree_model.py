@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -33,6 +34,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
 from app.core.models import ActionKind, ConflictKind, PlanItem, SortPlan
 from app.ui.theme import CONFLICT, SUCCESS, category_color
@@ -99,6 +101,11 @@ class PlanTreeModel(QAbstractItemModel):
         self._nodes: list[_Node] = []
         self._roots: list[int] = []
         self._mode = ViewMode.AFTER
+        #: 每个条目的分组键，两种模式各存一份，在 set_plan 时算好
+        self._names: list[str] = []
+        self._keys_after: list[str] = []
+        self._keys_before: list[str] = []
+        self._colors_after: list[str] = []
 
     # -- 数据装载 ---------------------------------------------------------
 
@@ -106,8 +113,48 @@ class PlanTreeModel(QAbstractItemModel):
         self.beginResetModel()
         self._plan = plan
         self._items = plan.all_items() if plan else []
+        self._precompute()
         self._rebuild()
         self.endResetModel()
+
+    def _precompute(self) -> None:
+        """一次算好两种模式的分组键与排序键。
+
+        分组键只取决于条目本身，不随模式变化而变化，所以没必要在每次切换视图时重算。
+        这里是 10 万条目下最贵的一段，两处开销都被实测抓到过：
+
+        - ``entry.path.parent``（整理前分组）：pathlib 每次都要重新解析路径并构造新
+          对象，10 万次实测 2.37 秒。改用 ``os.path.dirname`` 在字符串上做，
+          省掉全部 Path 构造。
+        - ``SortPlan.category_by_id``（整理后分组）：线性扫描，逐条目调用是
+          O(条目 × 类目)。这里先建一次 id 索引。
+
+        两项合起来把切换视图模式从 1.2 秒以上降到毫秒级（需求 10.14 的预算是 100ms）。
+        """
+        items = self._items
+        self._names = [item.entry.name for item in items]
+        # 整理前：按源文件所在目录分组
+        self._keys_before = [
+            os.path.dirname(str(item.entry.path)) for item in items
+        ]
+
+        by_id: dict[str, tuple[str, str]] = {}
+        plan = self._plan
+        if plan is not None:
+            for category in plan.categories:
+                by_id[category.id] = (
+                    "/".join(category.path_parts),
+                    category.color,
+                )
+
+        keys: list[str] = []
+        colors: list[str] = []
+        for item in items:
+            label, color = by_id.get(item.category_id, ("?", ""))
+            keys.append(label)
+            colors.append(color)
+        self._keys_after = keys
+        self._colors_after = colors
 
     def set_mode(self, mode: ViewMode) -> None:
         """切换整理前 / 整理后。只换分组键，不重建数据。需求 10.4。"""
@@ -151,13 +198,19 @@ class PlanTreeModel(QAbstractItemModel):
         groups: dict[str, list[int]] = {}
         colors: dict[str, str] = {}
 
-        for position, item in enumerate(self._items):
-            key, color = self._group_of(item, position)
+        # 分组键在 _precompute 里算好，切换视图只是换用另一份列表
+        before = self._mode is ViewMode.BEFORE
+        keys = self._keys_before if before else self._keys_after
+        names = self._names
+        item_colors = self._colors_after
+
+        for position, key in enumerate(keys):
             groups.setdefault(key, []).append(position)
-            colors.setdefault(key, color)
+            if key not in colors:
+                colors[key] = "" if before else item_colors[position]
 
         for order, key in enumerate(sorted(groups)):
-            members = sorted(groups[key], key=lambda i: self._items[i].entry.name)
+            members = sorted(groups[key], key=names.__getitem__)
             node = _Node(
                 label=key,
                 parent_row=None,
@@ -168,15 +221,6 @@ class PlanTreeModel(QAbstractItemModel):
             )
             self._nodes.append(node)
             self._roots.append(len(self._nodes) - 1)
-
-    def _group_of(self, item: PlanItem, position: int) -> tuple[str, str]:
-        if self._mode is ViewMode.BEFORE:
-            return str(item.entry.path.parent), ""
-        plan = self._plan
-        category = plan.category_by_id(item.category_id) if plan else None
-        if category is None:
-            return "?", ""
-        return "/".join(category.path_parts), category.color
 
     # -- QAbstractItemModel ----------------------------------------------
 
@@ -308,15 +352,9 @@ class PlanTreeModel(QAbstractItemModel):
                 return f"{node.total} 个文件"
             return None
         if role == Qt.ItemDataRole.ForegroundRole and column == Column.NAME:
-            from PySide6.QtGui import QColor
-
-            return QColor(node.color) if node.color else None
+            return _color(node.color) if node.color else None
         if role == Qt.ItemDataRole.FontRole and column == Column.NAME:
-            from PySide6.QtGui import QFont
-
-            font = QFont()
-            font.setBold(True)
-            return font
+            return _bold_font()
         return None
 
     def _item_data(self, node: _Node, column: int, role: int) -> Any:
@@ -355,10 +393,8 @@ class PlanTreeModel(QAbstractItemModel):
             return None
 
         if role == Qt.ItemDataRole.ForegroundRole and column == Column.ACTION:
-            from PySide6.QtGui import QColor
-
             if item.conflict is not ConflictKind.NONE:
-                return QColor(CONFLICT)
+                return _color(CONFLICT)
             return None
 
         return None
@@ -490,9 +526,18 @@ _CONFLICT_LABELS: dict[ConflictKind, str] = {
 }
 
 
+#: 角标按颜色缓存。``data()`` 的 DecorationRole 会在每一可见行的每次重绘时被查询，
+#: 原实现每次都新建 QPixmap 并跑一遍 QPainter——10 万条目下这是滚动卡顿的主因
+#: （实测最慢一段 138ms，超出需求 10.14 的 100ms 预算）。角标是不可变的纯色圆点，
+#: 全应用共享同一份完全安全。
+_DOT_CACHE: dict[str, QPixmap] = {}
+
+
 def _dot(color: str) -> Any:
-    """一个纯色小圆点，用作状态角标。"""
-    from PySide6.QtGui import QColor, QPainter, QPixmap
+    """一个纯色小圆点，用作状态角标。按颜色缓存。"""
+    cached = _DOT_CACHE.get(color)
+    if cached is not None:
+        return cached
 
     size = 10
     pixmap = QPixmap(size, size)
@@ -503,4 +548,27 @@ def _dot(color: str) -> Any:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawEllipse(0, 0, size - 1, size - 1)
     painter.end()
+    _DOT_CACHE[color] = pixmap
     return pixmap
+
+
+#: 同理：分组行的粗体字体与前景色也在每次重绘时被查询，没必要每次新建对象。
+_BOLD_FONT: QFont | None = None
+_COLOR_CACHE: dict[str, QColor] = {}
+
+
+def _bold_font() -> QFont:
+    global _BOLD_FONT
+    if _BOLD_FONT is None:
+        font = QFont()
+        font.setBold(True)
+        _BOLD_FONT = font
+    return _BOLD_FONT
+
+
+def _color(value: str) -> QColor:
+    cached = _COLOR_CACHE.get(value)
+    if cached is None:
+        cached = QColor(value)
+        _COLOR_CACHE[value] = cached
+    return cached
