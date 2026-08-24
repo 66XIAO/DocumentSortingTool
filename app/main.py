@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import sys
 import traceback
+from pathlib import Path
 from types import TracebackType
 
 logger = logging.getLogger("docsorter")
@@ -61,17 +62,43 @@ def configure_logging() -> None:
     )
 
 
+def resource_dir() -> Path:
+    """资源目录，兼容开发运行与 PyInstaller 产物两种布局。
+
+    PyInstaller 把 spec 里 ``datas`` 声明的 ``resources`` 解包到 ``sys._MEIPASS``
+    之下（onedir 模式即 ``_internal/resources``）；开发运行时它在仓库根。两处布局
+    不同，但只有这一个函数需要知道这件事。
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        return Path(bundled) / "resources"
+    return Path(__file__).resolve().parent.parent / "resources"
+
+
+def app_icon_path() -> Path:
+    return resource_dir() / "icon.ico"
+
+
 def main() -> int:
     """应用主入口。"""
     configure_logging()
     install_exception_hook()
 
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
     app.setApplicationVersion(_app_version())
+
+    # 窗口与任务栏图标。EXE 内嵌的那份只决定可执行文件本身的外观，运行起来之后
+    # 窗口用的是这里设的图标；缺失时不阻断启动，只是没有图标
+    icon_path = app_icon_path()
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
+    else:
+        logger.warning("应用图标缺失: %s", icon_path)
 
     # 首次运行把随包的 rules_default.yaml 释放到 %APPDATA%\DocSorter\rules.yaml
     # 具体实现见任务 7 的 SettingsManager。

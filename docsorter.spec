@@ -15,6 +15,9 @@ a = Analysis(
     datas=[
         # 需求 18.6：把 rules_default.yaml 纳入包内
         ('app/config/rules_default.yaml', 'app/config'),
+        # 图标同时要在运行期可读（窗口图标、任务栏图标），不能只交给 EXE 的
+        # icon= 内嵌——那份只影响可执行文件本身的外观
+        ('resources/icon.ico', 'resources'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -56,7 +59,9 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon='resources/icon.ico',  # 若有图标可取消注释
+    # 由 tools/make_icon.py 生成，多尺寸 16..256——Windows 在任务栏、Alt-Tab、
+    # 资源管理器各处取不同尺寸，只给 256 会让小尺寸由系统缩放而发虚
+    icon='resources/icon.ico',
 )
 
 coll = COLLECT(
