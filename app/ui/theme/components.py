@@ -20,8 +20,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -176,6 +178,95 @@ def choose_option(
     return dialog.chosen if dialog.chosen is not None else len(options) - 1
 
 
+class ListConfirmDialog(QDialog):
+    """带完整清单的确认对话框。需求 20.7。
+
+    ``confirm()`` 把正文塞进一个 ``QLabel``，几百条路径会把对话框撑到比屏幕还高——
+    与主窗口那次「标题栏被顶出屏幕」是同一类故障。所以清单放进固定高度的可滚动列表：
+    条目一条不少（需求 20.7 要的是**完整**清单），但对话框高度有上限。
+    """
+
+    #: 清单区最大高度。再高就会在 768px 屏幕上把按钮挤出可视区。
+    MAX_LIST_HEIGHT = 260
+
+    def __init__(
+        self,
+        parent: QWidget,
+        title: str,
+        body: str,
+        items: list[str],
+        ok_text: str,
+        cancel_text: str = "取消",
+        list_caption: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self._accepted = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        message = QLabel(body, self)
+        message.setWordWrap(True)
+        layout.addWidget(message)
+
+        if list_caption:
+            caption = QLabel(list_caption, self)
+            caption.setWordWrap(True)
+            layout.addWidget(caption)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.addItems(items)
+        self.list_widget.setMaximumHeight(self.MAX_LIST_HEIGHT)
+        # 只读展示，不让用户以为可以在这里挑挑拣拣
+        self.list_widget.setSelectionMode(
+            QListWidget.SelectionMode.NoSelection
+        )
+        layout.addWidget(self.list_widget)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton(cancel_text, self)
+        self.cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(self.cancel_button)
+        self.ok_button = QPushButton(ok_text, self)
+        self.ok_button.clicked.connect(self._accept)
+        buttons.addWidget(self.ok_button)
+        layout.addLayout(buttons)
+
+        # 取消作为默认：这个对话框只在会删目录时出现，回车不该落在破坏性动作上
+        self.cancel_button.setDefault(True)
+
+    @property
+    def confirmed(self) -> bool:
+        return self._accepted
+
+    def _accept(self) -> None:
+        self._accepted = True
+        self.accept()
+
+
+def confirm_with_list(
+    parent: QWidget,
+    title: str,
+    body: str,
+    items: list[str],
+    ok_text: str,
+    cancel_text: str = "取消",
+    list_caption: str = "",
+) -> bool:
+    """带完整清单的确认。清单为空时退回普通确认框。"""
+    if not items:
+        return confirm(parent, title, body, ok_text, cancel_text)
+    dialog = ListConfirmDialog(
+        parent, title, body, items, ok_text, cancel_text, list_caption
+    )
+    dialog.exec()
+    return dialog.confirmed
+
+
 class CountdownDialog(QDialog):
     """确认之后的最后一道闸门：倒计时窗口 + 大号取消按钮。需求 11.4。
 
@@ -292,6 +383,7 @@ __all__ = [
     "ChoiceDialog",
     "ComboBox",
     "CountdownDialog",
+    "ListConfirmDialog",
     "FIF",
     "FLUENT_AVAILABLE",
     "FluentWindow",
@@ -309,6 +401,7 @@ __all__ = [
     "apply_system_theme",
     "choose_option",
     "confirm",
+    "confirm_with_list",
     "countdown_to_start",
     "toast_error",
     "toast_info",

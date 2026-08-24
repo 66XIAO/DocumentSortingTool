@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.core import fsops
+from app.core import cleanup, fsops
 from app.core.classifiers.base import (
     OTHER,
     UNCLASSIFIED,
@@ -411,37 +411,13 @@ class Planner:
 class EmptyDirPredictor:
     """预测执行后会变空的目录。需求 20.7。
 
-    与 Executor 的实际清理共用同一套条件与同一个纯函数
-    ``fsops.is_predicted_empty``，因此预测清单与实际删除不可能出现偏差
-    （属性 38）。
+    实现整体委派给 ``app.core.cleanup.predict_for_plan``——方案预览、模拟运行与真实
+    执行必须共用同一段判定，属性 38 才是结构性成立的。
+
+    这里原本有一套独立实现，它逐个候选目录判定却**不累积**已判定会被删的子目录，
+    因此在「子目录被移空删掉后父目录才跟着变空」的嵌套情形下比实际删除**少报**。
+    确认对话框据此列出的清单会少于真正被删的目录，属于最危险的偏差方向，已删除。
     """
 
     def predict(self, plan: SortPlan, selection: ScanSelection) -> list[Path]:
-        candidates = selection.selected_closure()
-        if not candidates:
-            # 两层勾选缺一层，候选集合为空（需求 20.5、20.10）
-            return []
-
-        moving_out: dict[Path, set[Path]] = defaultdict(set)
-        for item in plan.all_items():
-            if not item.included or item.action is ActionKind.SKIP:
-                continue
-            moving_out[item.entry.path.parent].add(item.entry.path)
-
-        predicted: list[Path] = []
-        root = plan.root
-        for directory in candidates:
-            if directory == root:
-                continue  # 根目录永不删除（需求 20.14）
-            moved = moving_out.get(directory)
-            if not moved:
-                continue  # 本次没有文件从这里移出（需求 20.9）
-            try:
-                listing = frozenset(directory.iterdir())
-            except OSError:
-                continue
-            if fsops.is_predicted_empty(listing, frozenset(moved)):
-                predicted.append(directory)
-
-        # 深度降序：先删子目录，父目录才有机会随之变空
-        return sorted(predicted, key=lambda p: len(p.parts), reverse=True)
+        return cleanup.predict_for_plan(plan, selection)

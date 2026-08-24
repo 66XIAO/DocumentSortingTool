@@ -119,3 +119,73 @@ def naive_scan(
     for folder in selected:
         paths |= naive_loose_files(folder, include_hidden, excluded)
     return paths
+
+
+def _ancestors_below(path: Path, root: Path) -> list[Path]:
+    """path 的各级父目录中严格位于 root 之下的那些（不含 root 自身）。"""
+    result: list[Path] = []
+    current = path.parent
+    while current != root and root in current.parents:
+        result.append(current)
+        current = current.parent
+    return result
+
+
+def naive_expected_removed_dirs(
+    before_tree: set[Path],
+    moved: list[tuple[Path, Path]],
+    selected_closure: frozenset[Path],
+    root: Path,
+) -> set[Path]:
+    """需求 20 那套四条件的直译。对照属性 37。
+
+    刻意与生产代码的推导路径完全独立：生产代码先算候选集合再做一次深度降序遍历，
+    这里则是「先把执行后的树整个模拟出来，再反复扫到不动点」。两条路算出同一个集合，
+    才说明那不是同一个 bug 出现在两处。
+
+    参数：
+        before_tree       执行前根目录下的全部路径（含目录）
+        moved             实际发生的移动，每项是 (源路径, 目标路径)
+        selected_closure  用户勾选参与整理的目录闭包
+        root              整理根目录
+
+    四条件：
+        (a) 位于根目录之内
+        (b) 本次 run 中有文件从该目录移出
+        (c) 全部文件操作结束后既不含文件也不含子目录
+        (d) 不是根目录本身
+    另加需求 20.5 的两层勾选：必须落在勾选闭包内。
+    """
+    root = Path(root)
+
+    # 1) 把执行后的树模拟出来：移走的源消失，目标及其各级父目录出现
+    after = set(before_tree)
+    for src, dst in moved:
+        after.discard(Path(src))
+        dst = Path(dst)
+        after.add(dst)
+        after.update(_ancestors_below(dst, root))
+
+    # 2) 候选：条件 (a)(b)(d) + 勾选闭包
+    candidates = {Path(src).parent for src, _ in moved}
+    candidates &= set(selected_closure)
+    candidates.discard(root)
+    candidates = {d for d in candidates if root in d.parents}
+
+    # 3) 条件 (c)：反复扫到不动点。子目录被删掉之后父目录才可能变空，
+    #    用不动点迭代表达这件事，不必自己安排删除顺序。
+    removed: set[Path] = set()
+    changed = True
+    while changed:
+        changed = False
+        for directory in sorted(candidates - removed):
+            children = {
+                p
+                for p in after
+                if p.parent == directory and p not in removed
+            }
+            if not children:
+                removed.add(directory)
+                after.discard(directory)
+                changed = True
+    return removed

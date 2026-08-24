@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core import fsops
+from app.core.cleanup import collect_candidates, predict_removed
 from app.core.journal import Journal
 from app.core.models import (
     ActionKind,
@@ -391,30 +392,6 @@ class Executor:
         )
 
 
-def collect_cleanup_candidates(
-    moved_sources: Sequence[Path],
-    selection: ScanSelection,
-    root: Path,
-) -> list[Path]:
-    """空目录清理的候选集合。需求 20.6、20.8、20.9、20.10、20.14。
-
-    纯集合运算，无 I/O。这让需求 20 的约束成为结构性结论——预测清单与实际删除
-    共用这一个函数（属性 38）。
-    """
-    candidates = {Path(p) for p in moved_sources}
-    candidates &= selection.selected_closure()
-    candidates.discard(Path(root))
-
-    resolved_root = Path(root).resolve()
-    inside = {
-        d
-        for d in candidates
-        if _is_inside(d, resolved_root)
-    }
-    # 深度降序：先删子目录，父目录才有机会随之变空
-    return sorted(inside, key=lambda p: (len(p.parts), str(p)), reverse=True)
-
-
 def plan_for_resume(
     manifest: Manifest, pending_sources: Sequence[str]
 ) -> SortPlan:
@@ -448,31 +425,7 @@ def plan_for_resume(
     )
 
 
-def predict_removed_dirs(
-    candidates: Sequence[Path], moved_files: Sequence[Path]
-) -> list[Path]:
-    """模拟运行的待删目录清单。需求 20.7、20.20。
-
-    ``candidates`` 必须是深度降序（``collect_cleanup_candidates`` 的输出即是）。
-    ``gone`` 累积已判定为会被删掉的子目录，使「子目录被删后父目录才变空」这种嵌套
-    情形的预测与真实执行一致——真实执行正是按同一顺序逐级删的。
-    """
-    moved_out = frozenset(Path(p) for p in moved_files)
-    predicted: list[Path] = []
-    gone: set[Path] = set()
-    for directory in candidates:
-        try:
-            listing = frozenset(directory.iterdir())
-        except OSError:
-            continue
-        if fsops.is_predicted_empty(listing, moved_out | frozenset(gone)):
-            predicted.append(directory)
-            gone.add(directory)
-    return predicted
-
-
-def _is_inside(directory: Path, resolved_root: Path) -> bool:
-    try:
-        return directory.resolve().is_relative_to(resolved_root)
-    except (OSError, ValueError):
-        return False
+#: 空目录清理的判定全部搬到 ``app.core.cleanup``，让方案预览、模拟运行与真实执行
+#: 共用同一段代码（属性 38）。这里保留两个别名，因为它们是既有调用方与测试的入口名。
+collect_cleanup_candidates = collect_candidates
+predict_removed_dirs = predict_removed

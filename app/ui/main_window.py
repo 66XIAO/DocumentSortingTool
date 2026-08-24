@@ -14,9 +14,11 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from app.config.settings import Settings, SettingsManager, default_app_dir
+from app.core import cleanup
 from app.core.history import HistoryManager
 from app.core.models import (
     CategoryOverride,
@@ -50,6 +52,7 @@ from app.ui.theme import (
     apply_system_theme,
     choose_option,
     confirm,
+    confirm_with_list,
     countdown_to_start,
     toast_error,
     toast_info,
@@ -488,14 +491,36 @@ class SortFlowPage(QWidget):
         stats = plan.stats()
         folders = len({i.target.parent for i in plan.all_items() if i.included})
         # 需求 11.3：确认框必须写出具体数字与可撤销的说明
-        if not confirm(
-            self,
-            "开始整理",
+        body = (
             f"将移动 {stats.pending_move} 个文件到 {folders} 个文件夹。\n\n"
             "此操作可完整撤销：完成后在结果页点「撤销本次整理」，或之后在"
-            "「历史记录」里撤销。",
-            ok_text="开始整理",
-        ):
+            "「历史记录」里撤销。"
+        )
+
+        # 需求 20.7：开启空目录清理时，确认框必须给出预计删除数量与**完整清单**。
+        # 清单来自 cleanup.predict_for_plan——与模拟运行、真实执行同一段判定，
+        # 因此这里列出的就是真正会被删掉的目录（属性 38）。
+        doomed = (
+            cleanup.predict_for_plan(plan, self._selection())
+            if self._settings.cleanup.remove_empty_dirs
+            else []
+        )
+        if doomed:
+            root = plan.root
+            body += (
+                f"\n\n另外将删除 {len(doomed)} 个因本次整理而变空的子文件夹"
+                "（同样可通过撤销恢复）："
+            )
+            if not confirm_with_list(
+                self,
+                "开始整理",
+                body,
+                [self._display_path(path, root) for path in doomed],
+                ok_text="开始整理",
+                list_caption="以下目录将被删除：",
+            ):
+                return
+        elif not confirm(self, "开始整理", body, ok_text="开始整理"):
             return
 
         # 需求 11.4：确认之后还留 3 秒取消窗口。误点击的典型形态是手比脑子快，
@@ -520,6 +545,18 @@ class SortFlowPage(QWidget):
     def _selection(self):
         session = self._service.session
         return session.selection() if session else None
+
+    @staticmethod
+    def _display_path(path: Path, root: Path) -> str:
+        """清单里显示相对根目录的路径。
+
+        绝对路径又长又都带同一段前缀，几十条堆在一起反而看不出差别；相对路径能让
+        用户一眼认出是哪几个子文件夹。
+        """
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
 
     def _on_execute_finished(self, payload: object) -> None:
         from app.core.models import ExecutionReport
@@ -706,6 +743,7 @@ class MainWindow(FluentWindow):
         self.resize(1000, 600)
         # 允许窗口进一步缩小到更矮的屏幕，避免底部操作条被挤出可视区
         self.setMinimumSize(840, 480)
+        self._geometry_settled = False
 
         engine, rule_errors = self._load_rules()
         self._plan_service = PlanService(engine=engine, guard=guard, parent=self)
@@ -736,6 +774,69 @@ class MainWindow(FluentWindow):
         self.settings_page.settingsChanged.connect(self._on_settings_changed)
 
         self._build_navigation()
+        self.fit_to_screen()
+
+    # -- 窗口几何 ---------------------------------------------------------
+
+    def fit_to_screen(self) -> None:
+        """把窗口夹进当前屏幕的可用区，保证标题栏可被拖动。
+
+        为什么需要这一步：``resize()`` 只是**建议**，Qt 会把窗口撑到布局的
+        ``minimumSizeHint``。任何一个页面变高都会顶高整个窗口（各页共用一个
+        StackedWidget，栈的最小高度取各页最大值），窗口随后被居中，标题栏就被推到
+        屏幕上方之外——此时用户既不能拖动窗口，也够不到关闭按钮，只能用任务管理器。
+
+        因此这里做两件事，顺序不能反：
+            1. 先把尺寸压到可用区之内（``setMinimumSize`` 要一起放宽，否则
+               ``resize`` 会被最小尺寸挡住）
+            2. 再把位置夹进可用区，且左上角优先——宁可让右下角超出，也不能让标题栏
+               跑到屏幕外面去
+
+        用 ``availableGeometry`` 而不是 ``geometry``：任务栏占的那几十像素必须算进去。
+        """
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:  # pragma: no cover - 无显示设备时不该崩
+            return
+        available = screen.availableGeometry()
+
+        # 1) 尺寸：留一点边距，免得贴死屏幕边缘
+        margin = 2 * SPACE_XL
+        max_width = max(320, available.width() - margin)
+        max_height = max(240, available.height() - margin)
+
+        # 最小尺寸必须先放宽，否则下面的 resize 会被它挡住而无效
+        self.setMinimumSize(
+            min(self.minimumWidth(), max_width),
+            min(self.minimumHeight(), max_height),
+        )
+        width = min(self.width(), max_width)
+        height = min(self.height(), max_height)
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
+
+        # 2) 位置：居中后夹进可用区，左上角优先
+        frame = self.frameGeometry()
+        frame.setSize(self.size())
+        frame.moveCenter(available.center())
+        if frame.right() > available.right():
+            frame.moveRight(available.right())
+        if frame.bottom() > available.bottom():
+            frame.moveBottom(available.bottom())
+        frame.moveLeft(max(frame.left(), available.left()))
+        frame.moveTop(max(frame.top(), available.top()))
+        self.move(frame.topLeft())
+
+    def showEvent(self, event: object) -> None:  # noqa: N802
+        """首次显示后再夹一次。
+
+        无边框窗口的最终几何要到 show 之后才定下来（组件库自己也会在 show 时调整
+        标题栏与阴影），只在 ``__init__`` 里算一次可能被随后的调整推翻。之后不再干预，
+        否则用户自己挪动或最大化窗口会被我们弹回去。
+        """
+        super().showEvent(event)  # type: ignore[misc]
+        if not self._geometry_settled:
+            self._geometry_settled = True
+            self.fit_to_screen()
 
     def _build_navigation(self) -> None:
         """侧边导航四入口。需求 17.1。"""
