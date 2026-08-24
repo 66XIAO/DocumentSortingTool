@@ -81,7 +81,10 @@ class TargetAllocator:
         if check_locked and is_locked(source):
             return target, ConflictKind.LOCKED, None
 
-        occupied = target in self._taken or target.exists()
+        # 「本批已占用」与「磁盘上已存在」必须分开：前者是我们自己刚安排进去的
+        # 文件，后者才是需求 12.4 所说的、可以被送进回收站的既有文件。
+        claimed = target in self._taken
+        occupied = claimed or target.exists()
         if not occupied:
             self._taken.add(target)
             return target, ConflictKind.NONE, None
@@ -90,10 +93,17 @@ class TargetAllocator:
             # 不占用目标：这个条目不会被执行
             return target, ConflictKind.EXISTS, None
 
-        if policy is ConflictPolicy.OVERWRITE:
-            # 保留冲突标记，由 UI 二次确认后才允许执行（需求 9.6）
+        if policy is ConflictPolicy.OVERWRITE and not claimed:
+            # 覆盖既有文件：保留冲突标记，由 UI 二次确认后才允许执行（需求 9.6），
+            # 被覆盖者由 Executor 送进回收站（需求 12.4）
             self._taken.add(target)
             return target, ConflictKind.EXISTS, None
+
+        # 走到这里是 AUTO_RENAME，或者「覆盖策略下目标已被本批另一个条目占用」。
+        # 后者必须改名，不能真去覆盖：此时目标位置上放的是本次刚搬过去的文件，
+        # 没有任何「既有文件」需要被覆盖，覆盖只会让前一个源文件凭空消失，而结果
+        # 报告还会把两条都记成成功（违反属性 25、需求 12.1）。用户选择「覆盖」
+        # 表达的是「同名的旧文件可以让位」，不是「同批的两个文件可以互相销毁」。
 
         renamed = fsops.next_available_name(target, taken=frozenset(self._taken))
         if fsops.is_path_too_long(renamed):
