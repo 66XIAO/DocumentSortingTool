@@ -49,11 +49,26 @@ class ChatMessage:
 
 @dataclass(frozen=True)
 class ChatRequest:
-    """一次对话请求。"""
+    """一次对话请求。
+
+    ``response_format`` 采用 OpenAI 原生形状
+    ``{"type": "json_schema", "json_schema": {"name": ..., "schema": {...}}}``：
+    OpenAI 兼容服务原样透传，Ollama 由 ``OllamaProvider`` 取出里面的裸 schema 填到
+    ``format``。两家的字段名不同，翻译放在各自的 Provider 里，调用方只需构造一次
+    （需求 7.8）。
+    """
 
     messages: tuple[ChatMessage, ...]
     temperature: float = 0.0
     response_format: dict[str, Any] | None = None
+
+
+def json_schema_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """构造 OpenAI 原生的结构化输出声明。需求 7.8。"""
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": name, "strict": False, "schema": schema},
+    }
 
 
 @dataclass(frozen=True)
@@ -192,7 +207,13 @@ class OllamaProvider:
             },
         }
         if request.response_format:
-            payload["format"] = request.response_format.get("json_schema")
+            # Ollama 的 format 要的是**裸 JSON schema**，不是 OpenAI 那层
+            # {"name":..., "strict":..., "schema":...} 包装。传错会被整体忽略，
+            # 于是「要求结构化输出」静默失效。
+            wrapper = request.response_format.get("json_schema") or {}
+            schema = wrapper.get("schema") if isinstance(wrapper, dict) else None
+            if schema:
+                payload["format"] = schema
 
         try:
             with httpx.Client(timeout=timeout_seconds) as client:

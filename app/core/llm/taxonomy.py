@@ -26,6 +26,7 @@ from app.core.llm.provider import (
     FailureKind,
     Provider,
     ProviderError,
+    json_schema_format,
 )
 from app.core.models import FileEntry, PrivacyLevel
 
@@ -73,12 +74,41 @@ class Taxonomy:
 
 @dataclass
 class LLMAssignment:
-    """单个文件的 LLM 分类结果。"""
+    """单个文件的 LLM 分类结果。
+
+    ``rel_path`` 是消歧用的：只靠 ``name`` 回填会在同名文件上把结果挂到错误的
+    文件身上（``报告.docx`` 在两个子文件夹里各有一份是很常见的）。提示里会同时给出
+    相对路径并要求模型回显，回填时优先按它匹配。模型没回显时该字段为空串，调用方
+    退回「名字在本批内唯一才采用」的保守规则。
+    """
 
     name: str
     category: tuple[str, ...] | None  # None 表示 unknown / 不在 taxonomy 中
     confidence: float
     reason: str
+    rel_path: str = ""
+
+
+#: 第一阶段的结构化输出约束：类目路径数组的数组。需求 7.8。
+TAXONOMY_SCHEMA: Final[dict[str, Any]] = {
+    "type": "array",
+    "items": {"type": "array", "items": {"type": "string"}},
+}
+
+#: 第二阶段的结构化输出约束。需求 7.8、7.9。
+ASSIGNMENT_SCHEMA: Final[dict[str, Any]] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "rel_path": {"type": "string"},
+            "category": {"type": ["array", "null"], "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["name", "category"],
+    },
+}
 
 
 @dataclass
@@ -274,12 +304,24 @@ def _build_classify_prompt(
 ) -> str:
     """构建第二阶段提示：按固定 taxonomy 分类。"""
     tax_lines = ["- " + "/".join(cat) for cat in taxonomy.categories]
-    file_lines = [f"- {s.name} ({s.ext})" for s in summaries]
+    file_lines = []
+    for s in summaries:
+        line = f"- name={s.name} | rel_path={s.rel_path} | ext={s.ext}"
+        # 隐私档为「仅元数据」时 text_head 恒为 None，这里天然不会外发正文
+        # （需求 8.1、8.2）。
+        if s.text_head:
+            excerpt = " ".join(s.text_head.split())[:HEAD_CHARS]
+            line += f" | 正文摘要={excerpt}"
+        file_lines.append(line)
     return (
         "你是一个文档分类专家。请把下列文件分类到给定的类目表中。\n"
         "要求：\n"
-        "1. 每个文件只能分配到类目表中的一个类目，或返回 unknown。\n"
-        "2. 只输出 JSON 数组，每个元素是 {\"name\": 文件名, \"category\": 类目路径数组或 null, \"reason\": 简要理由}。\n\n"
+        "1. 每个文件只能分配到类目表中的一个类目，或返回 null 表示 unknown。\n"
+        "2. 不得发明类目表以外的类目。\n"
+        "3. 必须原样回显每个文件的 name 与 rel_path，用于结果回填。\n"
+        "4. 只输出 JSON 数组，每个元素是 "
+        '{"name": 文件名, "rel_path": 相对路径, "category": 类目路径数组或 null, '
+        '"reason": 简要理由}。\n\n'
         "类目表：\n" + "\n".join(tax_lines) + "\n\n文件列表：\n" + "\n".join(file_lines)
     )
 
@@ -375,6 +417,7 @@ class TaxonomyBuilder:
                 ChatMessage("user", prompt),
             ),
             temperature=0.0,
+            response_format=json_schema_format("taxonomy", TAXONOMY_SCHEMA),
         )
 
         try:
@@ -408,6 +451,7 @@ class TaxonomyBuilder:
                 ChatMessage("user", prompt),
             ),
             temperature=0.0,
+            response_format=json_schema_format("assignments", ASSIGNMENT_SCHEMA),
         )
 
         try:
@@ -421,11 +465,20 @@ class TaxonomyBuilder:
             if not isinstance(item, dict):
                 continue
             name = str(item.get("name", ""))
+            rel_path = str(item.get("rel_path", "") or "")
             cat_raw = item.get("category")
             reason = str(item.get("reason", ""))
 
             if cat_raw is None:
-                assignments.append(LLMAssignment(name=name, category=None, confidence=0.0, reason=reason))
+                assignments.append(
+                    LLMAssignment(
+                        name=name,
+                        category=None,
+                        confidence=0.0,
+                        reason=reason,
+                        rel_path=rel_path,
+                    )
+                )
                 continue
 
             if isinstance(cat_raw, list) and all(isinstance(s, str) for s in cat_raw):
@@ -440,7 +493,15 @@ class TaxonomyBuilder:
                 cat = None
 
             confidence = 0.8 if cat is not None else 0.0
-            assignments.append(LLMAssignment(name=name, category=cat, confidence=confidence, reason=reason))
+            assignments.append(
+                LLMAssignment(
+                    name=name,
+                    category=cat,
+                    confidence=confidence,
+                    reason=reason,
+                    rel_path=rel_path,
+                )
+            )
 
         return LLMBatchResult(assignments=assignments)
 

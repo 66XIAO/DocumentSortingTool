@@ -1,4 +1,4 @@
-"""LLM 分类器。priority 50，在 content 之后、extension 之前（智能策略专用）。
+"""LLM 分类器。priority 120，在 content 之后、extension 之前（智能策略专用）。
 
 需求 6.4、6.6：``ai.enabled`` 为 false 时管线跳过 ``by_llm``，Provider 调用次数为 0。
 需求 8.7：LLM 分配的条目在预览树显示 AI 角标。
@@ -11,6 +11,9 @@ from collections.abc import Mapping
 
 from app.core.classifiers.base import SOURCE_LLM, ClassifyContext, Suggestion
 from app.core.models import FileEntry
+
+#: 严格介于 content(150) 与 extension(100) 之间。需求 3.6。
+PRIORITY_LLM = 120
 
 
 class LLMAssigned(Exception):
@@ -27,7 +30,11 @@ class LLMClassifier:
     """
 
     name = SOURCE_LLM
-    priority = 50  # 在 content(150) 之后、extension(100) 之前 — 实际 extension 是 100，llm 是 50
+    #: 需求 3.6 要求智能策略的求值顺序是 filename → content → llm → extension。
+    #: 管线按 priority 降序求值，因此 llm 必须严格落在 content(150) 与
+    #: extension(100) 之间。原值 50 低于 extension，会让顺序变成
+    #: content → extension → llm，LLM 结果永远被扩展名规则抢先。
+    priority = PRIORITY_LLM
 
     def __init__(self, suggestions: Mapping[str, Suggestion] | None = None) -> None:
         self._suggestions: Mapping[str, Suggestion] = suggestions or {}

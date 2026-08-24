@@ -230,9 +230,20 @@ class ExecOptions:
 
 @dataclass(frozen=True)
 class AIOptions:
+    """AI 分类的窄选项对象。
+
+    ``host`` 是 ``OllamaProvider`` 的必需参数（需求 7.1），必须和 ``base_url``
+    并列存在：两个 Provider 的连接参数不同名，合并成一个字段会让「切换 Provider
+    后连到上一个服务的地址」成为可能。
+
+    刻意**不含** api_key：凭据只从 keyring 取（需求 7.2、7.3），让它进入一个会被
+    序列化、被日志打印的选项对象，就等于给明文泄漏开了口子。
+    """
+
     enabled: bool = False
     provider: ProviderKind = ProviderKind.OPENAI_COMPAT
     base_url: str = ""
+    host: str = ""
     model: str = ""
     timeout_seconds: int = 30
     privacy_level: PrivacyLevel = PrivacyLevel.METADATA_ONLY

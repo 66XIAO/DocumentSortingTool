@@ -63,22 +63,45 @@ class LLMCache:
         return self._stats
 
     @staticmethod
-    def make_key(summaries: Sequence[FileSummary]) -> str:
+    def make_key(summaries: Sequence[FileSummary], *, scope: str = "") -> str:
         """由文件摘要集合生成稳定哈希 key。
 
-        排序后哈希，使不同顺序的同一组摘要得到相同 key。
+        排序后哈希，使不同顺序的同一组摘要得到相同 key（需求 8.5）。
+
+        key 必须覆盖**所有**会改变模型输出的输入，否则会返回一份不该复用的结果：
+
+        - ``rel_path``：只用 name 会让不同目录下的同名文件互相串味
+        - ``mtime``：文件被改过，正文与恰当类目都可能变了
+        - ``text_head``：隐私档从「仅元数据」升到「带正文」后请求内容不同
+        - ``scope``：provider / model / taxonomy / 隐私档。换模型或换 taxonomy 后
+          复用旧分配是错的，而这些都不在摘要里
+
+        text_head 存哈希而不是原文：key 会落进 SQLite，正文明文不该留在缓存文件里。
         """
-        # 用 (name, ext, size) 作为摘要的标识，排序后序列化
         items = sorted(
-            ((s.name, s.ext, s.size) for s in summaries),
-            key=lambda x: x[0],
+            (
+                (
+                    s.rel_path,
+                    s.name,
+                    s.ext,
+                    s.size,
+                    s.mtime,
+                    ""
+                    if not s.text_head
+                    else hashlib.sha256(s.text_head.encode("utf-8")).hexdigest(),
+                )
+                for s in summaries
+            ),
+            key=lambda x: (x[0], x[1]),
         )
-        data = json.dumps(items, ensure_ascii=False, sort_keys=True)
+        data = json.dumps([scope, items], ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def get(self, summaries: Sequence[FileSummary]) -> LLMBatchResult | None:
+    def get(
+        self, summaries: Sequence[FileSummary], *, scope: str = ""
+    ) -> LLMBatchResult | None:
         """查询缓存。需求 8.5。"""
-        key = self.make_key(summaries)
+        key = self.make_key(summaries, scope=scope)
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT result FROM batch_cache WHERE key = ?", (key,)
@@ -95,11 +118,13 @@ class LLMCache:
         self,
         summaries: Sequence[FileSummary],
         result: LLMBatchResult,
+        *,
+        scope: str = "",
     ) -> None:
         """写入缓存。需求 8.5。"""
         import datetime as _dt
 
-        key = self.make_key(summaries)
+        key = self.make_key(summaries, scope=scope)
         payload = json.dumps(_encode_result(result), ensure_ascii=False)
         now = _dt.datetime.now().isoformat()
 
@@ -132,6 +157,7 @@ def _encode_result(result: LLMBatchResult) -> dict[str, Any]:
                 "category": list(a.category) if a.category else None,
                 "confidence": a.confidence,
                 "reason": a.reason,
+                "rel_path": a.rel_path,
             }
             for a in result.assignments
         ]
@@ -150,6 +176,7 @@ def _decode_result(data: dict[str, Any]) -> LLMBatchResult:
                 category=category,
                 confidence=float(item.get("confidence", 0.0)),
                 reason=item.get("reason", ""),
+                rel_path=item.get("rel_path", "") or "",
             )
         )
     return LLMBatchResult(assignments=assignments)

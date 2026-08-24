@@ -378,6 +378,7 @@ class SettingsManager:
             enabled=settings.ai.enabled,
             provider=settings.ai.provider,
             base_url=settings.ai.base_url,
+            host=settings.ai.host,
             model=settings.ai.model,
             timeout_seconds=settings.ai.timeout_seconds,
             privacy_level=settings.ai.privacy_level,

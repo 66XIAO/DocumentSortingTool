@@ -23,6 +23,7 @@ from app.core.models import (
     ConflictPolicy,
     ItemOverride,
     ScanOptions,
+    Strategy,
 )
 from app.core.planner import PlanResult
 from app.core.progress import ProgressSnapshot
@@ -92,12 +93,16 @@ class SortFlowPage(QWidget):
         plan_service: PlanService | None = None,
         history_dir: Path | None = None,
         parent: QWidget | None = None,
+        settings_manager: SettingsManager | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("sortFlowPage")
         self._service = service
         self._plan_service = plan_service or PlanService(guard=service.guard, parent=self)
         self._settings = settings
+        #: 取 API key 需要它。允许为 None：测试里构造本页时不该去碰真实凭据存储，
+        #: 缺它就等于「没有可用 Provider」，AI 开关保持置灰。
+        self._settings_manager = settings_manager
         self._pending_toggle: tuple[Path, bool] | None = None
         self._conflict_policy = settings.conflict.policy
         self._last_run_id: str | None = None
@@ -126,15 +131,55 @@ class SortFlowPage(QWidget):
         self._stack.addWidget(self.result_page)
 
         self.select_page.set_recent(list(settings.ui.recent_roots))
-        self.preview_page.set_ai_available(False)
 
         self._wire()
         self._wire_preview()
         self._wire_execution()
+        self.refresh_ai_availability()
+
+    def update_settings(self, settings: Settings) -> None:
+        """设置页保存后替换本页持有的配置对象。
+
+        必须整体替换而不是逐字段同步：``SettingsManager.load()`` 返回的是一棵新的
+        对象树，继续持有旧树会让「设置页已保存、整理流程还用着旧值」这种不一致
+        长期存在。
+        """
+        self._settings = settings
+        self._conflict_policy = settings.conflict.policy
+        self.refresh_ai_availability()
+
+    def refresh_ai_availability(self) -> None:
+        """按当前设置刷新 AI 配置并同步预览页开关。需求 6.2、6.3。
+
+        每次设置变更后都要重来一遍：用户可能刚填上 model 或 API key，开关得跟着
+        从置灰变成可用。
+        """
+        settings = self._settings
+        manager = self._settings_manager
+        if manager is None:
+            self.preview_page.set_ai_available(False)
+            return
+
+        options = SettingsManager.to_ai_options(settings)
+        api_key = manager.get_api_key(str(settings.ai.provider)) or ""
+        self._plan_service.configure_ai(
+            options, api_key, cache_path=manager.base_dir / "llm_cache.db"
+        )
+        available = self._plan_service.ai_available()
+        # 没有可用 Provider 时 enabled 一律按 false 渲染：让一个开着的开关配一个
+        # 调不通的服务，比直接置灰更容易让人误以为 AI 正在生效
+        self.preview_page.set_ai_available(
+            available, enabled=settings.ai.enabled and available
+        )
 
     @property
     def history(self) -> HistoryManager:
         return self._history
+
+    @property
+    def plan_service(self) -> PlanService:
+        """给主窗口用：规则保存后要换引擎（需求 4.8）。"""
+        return self._plan_service
 
     @property
     def execute_service(self) -> ExecuteService:
@@ -218,6 +263,7 @@ class SortFlowPage(QWidget):
         page.backRequested.connect(lambda: self._stack.setCurrentIndex(STEP_SCAN))
         page.conflictPolicyChanged.connect(self._set_conflict_policy)
         page.cleanupToggled.connect(self._set_cleanup)
+        page.aiToggled.connect(self._set_ai_enabled)
         page.clearOverridesRequested.connect(self._clear_overrides)
         page.dryRunRequested.connect(self._dry_run)
         page.executeRequested.connect(self._execute)
@@ -236,6 +282,11 @@ class SortFlowPage(QWidget):
         self._plan_service.spaceInsufficient.connect(
             lambda message: toast_error(self, "空间不足", message)
         )
+        # 需求 6.5：AI 失败只提示并回落，方案照常展示，因此走 info 而不是 error
+        self._plan_service.aiFallback.connect(
+            lambda message: toast_info(self, "AI 分类不可用", message)
+        )
+        self._plan_service.aiEstimate.connect(self._on_ai_estimate)
 
     # -- 方案 -------------------------------------------------------------
 
@@ -365,6 +416,33 @@ class SortFlowPage(QWidget):
 
     def _set_cleanup(self, enabled: bool) -> None:
         self._settings.cleanup.remove_empty_dirs = enabled
+
+    def _set_ai_enabled(self, enabled: bool) -> None:
+        """预览页的即时开关与设置页作用于同一个配置项。需求 6.2、6.7。"""
+        if self._settings.ai.enabled == enabled:
+            return
+        self._settings.ai.enabled = enabled
+        self.refresh_ai_availability()
+        if enabled and self._settings.classify.strategy is not Strategy.SMART:
+            # 需求 3.6：只有「智能」策略的管线里才有 llm 这一环。开关开了但策略不是
+            # 智能时，如实说明而不是假装生效——否则用户会以为 AI 在工作
+            toast_info(
+                self,
+                "智能分类需要「智能」策略",
+                "当前分类策略不是「智能」，AI 不会参与分类。到设置页把策略改成"
+                "「智能」后再回来。",
+            )
+        # 需求 6.7：切换开关按需求 19 的重算流程重来一遍，override 由 PlanService
+        # 独家持有，因此重算不会冲掉手工调整
+        self._rebuild_plan()
+
+    def _on_ai_estimate(self, files: int, requests: int) -> None:
+        """需求 8.6：方案生成前告知规模与预估请求次数。"""
+        toast_info(
+            self,
+            "正在用 AI 分类",
+            f"{files:,} 个文件，约 {requests} 次请求。",
+        )
 
     # -- 执行与撤销 -------------------------------------------------------
 
@@ -642,6 +720,7 @@ class MainWindow(FluentWindow):
             self._plan_service,
             history_dir=self._settings_manager.history_dir,
             parent=self,
+            settings_manager=self._settings_manager,
         )
         self.history_page = HistoryPage(self)
         self.history_page.refreshRequested.connect(self._refresh_history)
@@ -689,16 +768,22 @@ class MainWindow(FluentWindow):
         )
 
     def _on_rules_saved(self) -> None:
-        """规则保存后重新加载引擎。需求 4.8。"""
-        from app.core.rules import RuleEngine, builtin_rules
-        rules_text = (self._settings_manager.base_dir / "rules.yaml").read_text(encoding="utf-8")
-        engine, errors = RuleEngine.from_text(rules_text)
-        if not errors:
-            self.sort_flow.plan_service.set_engine(engine)
+        """规则保存后重新加载引擎。需求 4.8。
+
+        复用 ``_load_rules``：它已经处理了文件缺失、读取失败与解析失败三种回落，
+        直接 ``read_text`` 会在文件刚被删掉时抛 FileNotFoundError 把窗口带下去。
+        """
+        engine, errors = self._load_rules()
+        if errors:
+            logger.warning("规则文件有 %d 处问题，未切换引擎", len(errors))
+            return
+        self.sort_flow.plan_service.set_engine(engine)
 
     def _on_settings_changed(self) -> None:
         """设置变更后更新内部状态。"""
         self._settings = self._settings_manager.load()
+        # 设置页可能刚改了 AI 开关、model 或 API key，预览页开关要跟着变
+        self.sort_flow.update_settings(self._settings)
 
     def _refresh_history(self) -> None:
         self.history_page.set_runs(self.sort_flow.history.list_runs())

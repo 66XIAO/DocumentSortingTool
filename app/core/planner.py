@@ -35,9 +35,11 @@ from app.core.classifiers.base import (
     Suggestion,
     build_pipeline,
 )
+from app.core.classifiers.by_content import ContentClassifier
 from app.core.classifiers.by_date import DateClassifier, date_parts
 from app.core.classifiers.by_extension import ExtensionClassifier
 from app.core.classifiers.by_filename import FilenameClassifier
+from app.core.classifiers.by_llm import LLMClassifier
 from app.core.models import (
     ActionKind,
     Category,
@@ -119,14 +121,20 @@ class Planner:
         overrides: OverrideSet | None = None,
         selection: ScanSelection | None = None,
         check_locked: bool = True,
+        llm_suggestions: dict[str, Suggestion] | None = None,
+        ai_enabled: bool = False,
     ) -> PlanResult:
         root = Path(root).resolve()
         options = options or ClassifyOptions(strategy=strategy)
-        ctx = ClassifyContext(root=root, options=options)
+        # LLM 结果作为**快照**传入而非现场调用：管线内不发请求，确定性才是结构性的
+        # （需求 3.13、7.9）。快照由 app.core.llm.runner 在本次重算之前算好。
+        ctx = ClassifyContext(
+            root=root, options=options, llm_suggestions=dict(llm_suggestions or {})
+        )
 
         # 1) 分类
         suggestions: dict[str, Suggestion] = {}
-        pipeline = self._pipeline_for(strategy)
+        pipeline = self._pipeline_for(strategy, ai_enabled=ai_enabled)
         date_classifier = DateClassifier()
         for entry in entries:
             suggestion = pipeline.classify(entry, ctx)
@@ -166,12 +174,29 @@ class Planner:
 
     # -- 内部 -------------------------------------------------------------
 
-    def _pipeline_for(self, strategy: Strategy) -> ClassifierPipeline:
+    def _pipeline_for(
+        self, strategy: Strategy, *, ai_enabled: bool = False
+    ) -> ClassifierPipeline:
+        """装配分类管线。
+
+        ``content`` 始终可用：它只在 ``entry.text_head`` 非空时才给建议
+        （见 ``ContentClassifier.classify``），没提取过正文的条目上它自然沉默，
+        因此不需要额外开关。
+
+        ``llm`` 仅在 ``ai_enabled`` 为真时注册。需求 6.4 要求 ``ai.enabled`` 为
+        false 时管线**跳过** LLM_Classifier——留着它查一张空表虽然结果相同，但
+        ``pipeline.names()`` 就不再如实反映「这次到底用了什么」，而这是排查
+        「为什么我的文件没被 AI 分类」时唯一能看的东西。
+        """
         available: dict[str, Classifier] = {
             FilenameClassifier(self._engine).name: FilenameClassifier(self._engine),
+            ContentClassifier(self._engine).name: ContentClassifier(self._engine),
             ExtensionClassifier(self._engine).name: ExtensionClassifier(self._engine),
             SOURCE_DATE: DateClassifier(),
         }
+        if ai_enabled:
+            classifier = LLMClassifier()
+            available[classifier.name] = classifier
         return build_pipeline(strategy, available)
 
     def _append_date_level(
