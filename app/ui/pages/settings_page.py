@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -69,17 +70,38 @@ class SettingsPage(QWidget):
         self._settings = settings
         self._manager = manager
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(SPACE_LG, SPACE_LG, SPACE_LG, SPACE_LG)
-        layout.setSpacing(SPACE_LG)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(SPACE_LG, SPACE_LG, SPACE_LG, SPACE_LG)
+        outer.setSpacing(SPACE_LG)
 
+        # 标题与「保存」留在滚动区**外**：设置项可以滚，但提交动作必须始终可点，
+        # 否则用户改完最后一项还得往上滚才能保存。
         header = QHBoxLayout()
         header.addWidget(TitleLabel("设置", self))
         header.addStretch()
         self._save_btn = PrimaryPushButton("保存", self)
         self._save_btn.clicked.connect(self._save)
         header.addWidget(self._save_btn)
-        layout.addLayout(header)
+        outer.addLayout(header)
+
+        # 六组设置必须放进滚动区。它们叠起来约 940px 高，而所有页面共用一个
+        # StackedWidget——栈的最小高度取各页最大值，本页不滚就会把整个主窗口顶到
+        # 1000px 以上。在 1536x864（可用高 816）的屏幕上，窗口随后被居中，标题栏
+        # 直接被推到屏幕上方之外，用户连拖动窗口都做不到。
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll.viewport().setAutoFillBackground(False)
+        body = QWidget(self._scroll)
+        self._scroll.setWidget(body)
+        outer.addWidget(self._scroll, 1)
+
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, SPACE_MD, 0)
+        layout.setSpacing(SPACE_LG)
 
         # --- 扫描 ---
         scan = _Section("扫描", self)
